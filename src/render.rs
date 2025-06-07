@@ -2,26 +2,23 @@ use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::render::render_asset::RenderAssetUsages;
 
-use crate::world::{Chunk, CHUNK_SIZE, CHUNK_VOXELS_SIZE, CHUNK_VOXELS_HEIGHT};
 use crate::voxel::VOXEL_SIZE;
+use crate::world::{CHUNK_SIZE, CHUNK_VOXELS_HEIGHT, CHUNK_VOXELS_SIZE, Chunk};
 
 pub struct RenderPlugin;
 
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, setup_lighting)
-           .add_systems(Update, chunk_rendering_system);
+            .add_systems(Update, chunk_rendering_system);
     }
 }
 
 fn setup_lighting(mut commands: Commands) {
-    // 定向光（太阳光）
     commands.spawn((
         DirectionalLight {
-            color: Color::srgb(1.0, 0.95, 0.8),
-            illuminance: 20000.0, // 增加光照强度
+            illuminance: 10000.0,
             shadows_enabled: true,
-            affects_lightmapped_mesh_diffuse: true,
             ..default()
         },
         Transform::from_rotation(Quat::from_euler(
@@ -32,11 +29,10 @@ fn setup_lighting(mut commands: Commands) {
         )),
     ));
 
-    // 增加环境光强度
     commands.insert_resource(AmbientLight {
-        color: Color::srgb(0.6, 0.6, 0.8),
-        brightness: 0.4, // 增加环境光亮度
-        affects_lightmapped_meshes: true,
+        color: Color::WHITE,
+        brightness: 60.0,
+        affects_lightmapped_meshes: false,
     });
 }
 
@@ -76,7 +72,7 @@ fn generate_chunk_mesh(chunk: &Chunk) -> Option<Mesh> {
     let mut indices = Vec::new();
     let mut normals = Vec::new();
     let mut uvs = Vec::new();
-    
+
     let mut face_count = 0;
 
     for x in 0..CHUNK_VOXELS_SIZE {
@@ -90,7 +86,11 @@ fn generate_chunk_mesh(chunk: &Chunk) -> Option<Mesh> {
                             &mut indices,
                             &mut normals,
                             &mut uvs,
-                            Vec3::new(x as f32 * VOXEL_SIZE, y as f32 * VOXEL_SIZE, z as f32 * VOXEL_SIZE),
+                            Vec3::new(
+                                x as f32 * VOXEL_SIZE,
+                                y as f32 * VOXEL_SIZE,
+                                z as f32 * VOXEL_SIZE,
+                            ),
                             chunk,
                             x,
                             y,
@@ -149,15 +149,27 @@ fn add_voxel_faces(
     }
 }
 
-fn should_render_face(chunk: &Chunk, x: usize, y: usize, z: usize, dx: i32, dy: i32, dz: i32) -> bool {
+fn should_render_face(
+    chunk: &Chunk,
+    x: usize,
+    y: usize,
+    z: usize,
+    dx: i32,
+    dy: i32,
+    dz: i32,
+) -> bool {
     let nx = x as i32 + dx;
     let ny = y as i32 + dy;
     let nz = z as i32 + dz;
 
     // 如果相邻位置超出区块边界，则渲染该面
-    if nx < 0 || nx >= CHUNK_VOXELS_SIZE as i32 || 
-       ny < 0 || ny >= CHUNK_VOXELS_HEIGHT as i32 || 
-       nz < 0 || nz >= CHUNK_VOXELS_SIZE as i32 {
+    if nx < 0
+        || nx >= CHUNK_VOXELS_SIZE as i32
+        || ny < 0
+        || ny >= CHUNK_VOXELS_HEIGHT as i32
+        || nz < 0
+        || nz >= CHUNK_VOXELS_SIZE as i32
+    {
         return true;
     }
 
@@ -181,42 +193,66 @@ fn add_face(
     let size = VOXEL_SIZE;
 
     let (face_vertices, face_normal) = match face_index {
-        0 => ([ // Left face (-X) 
-            [pos.x, pos.y, pos.z],
-            [pos.x, pos.y, pos.z + size],
-            [pos.x, pos.y + size, pos.z + size],
-            [pos.x, pos.y + size, pos.z],
-        ], [-1.0, 0.0, 0.0]),
-        1 => ([ // Right face (+X)
-            [pos.x + size, pos.y, pos.z],
-            [pos.x + size, pos.y + size, pos.z],
-            [pos.x + size, pos.y + size, pos.z + size],
-            [pos.x + size, pos.y, pos.z + size],
-        ], [1.0, 0.0, 0.0]),
-        2 => ([ // Bottom face (-Y)
-            [pos.x, pos.y, pos.z],
-            [pos.x + size, pos.y, pos.z],
-            [pos.x + size, pos.y, pos.z + size],
-            [pos.x, pos.y, pos.z + size],
-        ], [0.0, -1.0, 0.0]),
-        3 => ([ // Top face (+Y)
-            [pos.x, pos.y + size, pos.z],
-            [pos.x, pos.y + size, pos.z + size],
-            [pos.x + size, pos.y + size, pos.z + size],
-            [pos.x + size, pos.y + size, pos.z],
-        ], [0.0, 1.0, 0.0]),
-        4 => ([ // Back face (-Z)
-            [pos.x, pos.y, pos.z],
-            [pos.x, pos.y + size, pos.z],
-            [pos.x + size, pos.y + size, pos.z],
-            [pos.x + size, pos.y, pos.z],
-        ], [0.0, 0.0, -1.0]),
-        5 => ([ // Front face (+Z)
-            [pos.x, pos.y, pos.z + size],
-            [pos.x + size, pos.y, pos.z + size],
-            [pos.x + size, pos.y + size, pos.z + size],
-            [pos.x, pos.y + size, pos.z + size],
-        ], [0.0, 0.0, 1.0]),
+        0 => (
+            [
+                // Left face (-X)
+                [pos.x, pos.y, pos.z],
+                [pos.x, pos.y, pos.z + size],
+                [pos.x, pos.y + size, pos.z + size],
+                [pos.x, pos.y + size, pos.z],
+            ],
+            [-1.0, 0.0, 0.0],
+        ),
+        1 => (
+            [
+                // Right face (+X)
+                [pos.x + size, pos.y, pos.z],
+                [pos.x + size, pos.y + size, pos.z],
+                [pos.x + size, pos.y + size, pos.z + size],
+                [pos.x + size, pos.y, pos.z + size],
+            ],
+            [1.0, 0.0, 0.0],
+        ),
+        2 => (
+            [
+                // Bottom face (-Y)
+                [pos.x, pos.y, pos.z],
+                [pos.x + size, pos.y, pos.z],
+                [pos.x + size, pos.y, pos.z + size],
+                [pos.x, pos.y, pos.z + size],
+            ],
+            [0.0, -1.0, 0.0],
+        ),
+        3 => (
+            [
+                // Top face (+Y)
+                [pos.x, pos.y + size, pos.z],
+                [pos.x, pos.y + size, pos.z + size],
+                [pos.x + size, pos.y + size, pos.z + size],
+                [pos.x + size, pos.y + size, pos.z],
+            ],
+            [0.0, 1.0, 0.0],
+        ),
+        4 => (
+            [
+                // Back face (-Z)
+                [pos.x, pos.y, pos.z],
+                [pos.x, pos.y + size, pos.z],
+                [pos.x + size, pos.y + size, pos.z],
+                [pos.x + size, pos.y, pos.z],
+            ],
+            [0.0, 0.0, -1.0],
+        ),
+        5 => (
+            [
+                // Front face (+Z)
+                [pos.x, pos.y, pos.z + size],
+                [pos.x + size, pos.y, pos.z + size],
+                [pos.x + size, pos.y + size, pos.z + size],
+                [pos.x, pos.y + size, pos.z + size],
+            ],
+            [0.0, 0.0, 1.0],
+        ),
         _ => return,
     };
 
@@ -226,7 +262,11 @@ fn add_face(
 
     // 确保逆时针绕序
     indices.extend_from_slice(&[
-        start_vertex, start_vertex + 1, start_vertex + 2,
-        start_vertex, start_vertex + 2, start_vertex + 3,
+        start_vertex,
+        start_vertex + 1,
+        start_vertex + 2,
+        start_vertex,
+        start_vertex + 2,
+        start_vertex + 3,
     ]);
 }
