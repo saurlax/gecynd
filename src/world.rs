@@ -1,191 +1,129 @@
-use crate::voxel::{VoxelType, VoxelWorld};
+use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
-use noise::{NoiseFn, Perlin};
+use std::collections::HashSet;
+
+use crate::voxel::{Voxel, VOXEL_SIZE, VOXEL_PRECISION};
+use crate::terrain::TerrainGenerator;
+use crate::player::Player;
+
+pub const CHUNK_SIZE: usize = 16; // 区块在世界中的大小（单位）
+pub const CHUNK_HEIGHT: usize = 256; // 区块在世界中的高度（单位）
+pub const RENDER_DISTANCE: i32 = 5;
+
+// 实际的体素数组大小
+pub const CHUNK_VOXELS_SIZE: usize = CHUNK_SIZE * VOXEL_PRECISION as usize;
+pub const CHUNK_VOXELS_HEIGHT: usize = CHUNK_HEIGHT * VOXEL_PRECISION as usize;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ChunkCoord {
+    pub x: i32,
+    pub z: i32,
+}
+
+impl ChunkCoord {
+    pub fn new(x: i32, z: i32) -> Self {
+        Self { x, z }
+    }
+    
+    pub fn from_world_pos(world_pos: Vec3) -> Self {
+        Self {
+            x: (world_pos.x / CHUNK_SIZE as f32).floor() as i32,
+            z: (world_pos.z / CHUNK_SIZE as f32).floor() as i32,
+        }
+    }
+}
+
+#[derive(Component)]
+pub struct Chunk {
+    pub coord: ChunkCoord,
+    pub voxels: Vec<Vec<Vec<Voxel>>>,
+}
+
+impl Chunk {
+    pub fn new(coord: ChunkCoord) -> Self {
+        // 使用Vec来避免栈分配
+        let mut voxels = Vec::with_capacity(CHUNK_VOXELS_SIZE);
+        for _ in 0..CHUNK_VOXELS_SIZE {
+            let mut y_vec = Vec::with_capacity(CHUNK_VOXELS_HEIGHT);
+            for _ in 0..CHUNK_VOXELS_HEIGHT {
+                let z_vec = vec![Voxel::default(); CHUNK_VOXELS_SIZE];
+                y_vec.push(z_vec);
+            }
+            voxels.push(y_vec);
+        }
+        
+        Self {
+            coord,
+            voxels,
+        }
+    }
+    
+    pub fn get_voxel(&self, x: usize, y: usize, z: usize) -> Option<&Voxel> {
+        if x < CHUNK_VOXELS_SIZE && y < CHUNK_VOXELS_HEIGHT && z < CHUNK_VOXELS_SIZE {
+            Some(&self.voxels[x][y][z])
+        } else {
+            None
+        }
+    }
+    
+    pub fn set_voxel(&mut self, x: usize, y: usize, z: usize, voxel: Voxel) {
+        if x < CHUNK_VOXELS_SIZE && y < CHUNK_VOXELS_HEIGHT && z < CHUNK_VOXELS_SIZE {
+            self.voxels[x][y][z] = voxel;
+        }
+    }
+}
+
+#[derive(Resource)]
+pub struct World {
+    pub chunks: HashMap<ChunkCoord, Entity>,
+    pub terrain_generator: TerrainGenerator,
+}
+
+impl Default for World {
+    fn default() -> Self {
+        Self {
+            chunks: HashMap::new(),
+            terrain_generator: TerrainGenerator::new(),
+        }
+    }
+}
 
 pub struct WorldPlugin;
 
 impl Plugin for WorldPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, generate_initial_world)
-            .add_systems(Update, update_chunks_around_player)
-            .add_systems(Startup, setup_lighting);
+        app
+            .init_resource::<World>()
+            .add_systems(Update, chunk_loading_system);
     }
 }
 
-pub const CHUNK_SIZE: i32 = 32;
-pub const CHUNK_HEIGHT: i32 = 16;
-const RENDER_DISTANCE: i32 = 1; // 3x3x3 chunks around player
-
-fn generate_initial_world(mut voxel_world: ResMut<VoxelWorld>) {
-    // Generate initial chunks around origin
-    for x in -RENDER_DISTANCE..=RENDER_DISTANCE {
-        for z in -RENDER_DISTANCE..=RENDER_DISTANCE {
-            let chunk_key = IVec3::new(x, 0, z);
-            generate_chunk(&mut voxel_world, chunk_key);
-            voxel_world.loaded_chunks.insert(chunk_key);
-        }
-    }
-
-    // Clear a safe spawn area around origin (only above ground level)
-    let spawn_radius = 2;
-    for x in -spawn_radius..=spawn_radius {
-        for z in -spawn_radius..=spawn_radius {
-            // Find the ground level at this position first
-            let mut ground_level = 0;
-            for y in 0..CHUNK_HEIGHT {
-                let pos = IVec3::new(x, y, z);
-                if voxel_world.get_voxel(pos) != VoxelType::Air {
-                    ground_level = y + 1; // One block above the highest solid block
+fn chunk_loading_system(
+    mut commands: Commands,
+    mut world: ResMut<World>,
+    player_query: Query<&Transform, With<Player>>,
+) {
+    if let Ok(player_transform) = player_query.single() {
+        let player_chunk = ChunkCoord::from_world_pos(player_transform.translation);
+        let mut chunks_to_generate = HashSet::new();
+        
+        // 检查玩家周围的区块
+        for x in (player_chunk.x - RENDER_DISTANCE)..=(player_chunk.x + RENDER_DISTANCE) {
+            for z in (player_chunk.z - RENDER_DISTANCE)..=(player_chunk.z + RENDER_DISTANCE) {
+                let coord = ChunkCoord::new(x, z);
+                if !world.chunks.contains_key(&coord) {
+                    chunks_to_generate.insert(coord);
                 }
             }
-
-            // Only clear blocks above ground level + 1 (keep the ground and one layer above)
-            for y in (ground_level + 1)..10 {
-                let pos = IVec3::new(x, y, z);
-                voxel_world.set_voxel(pos, VoxelType::Air);
-            }
+        }
+        
+        // 生成新区块
+        for coord in chunks_to_generate {
+            let mut chunk = Chunk::new(coord);
+            world.terrain_generator.generate_chunk(&mut chunk);
+            
+            let entity = commands.spawn(chunk).id();
+            world.chunks.insert(coord, entity);
         }
     }
-}
-
-fn update_chunks_around_player(
-    mut voxel_world: ResMut<VoxelWorld>,
-    camera_query: Query<&Transform, With<Camera>>,
-) {
-    let Ok(camera_transform) = camera_query.get_single() else {
-        return;
-    };
-
-    let camera_pos = camera_transform.translation;
-    let chunk_pos = IVec3::new(
-        (camera_pos.x / (CHUNK_SIZE as f32 * crate::voxel::VOXEL_SIZE)).floor() as i32,
-        0, // Y is always 0 for now
-        (camera_pos.z / (CHUNK_SIZE as f32 * crate::voxel::VOXEL_SIZE)).floor() as i32,
-    );
-
-    // Generate chunks around player
-    for x in (chunk_pos.x - RENDER_DISTANCE)..=(chunk_pos.x + RENDER_DISTANCE) {
-        for z in (chunk_pos.z - RENDER_DISTANCE)..=(chunk_pos.z + RENDER_DISTANCE) {
-            let chunk_key = IVec3::new(x, 0, z);
-            if !voxel_world.loaded_chunks.contains(&chunk_key) {
-                generate_chunk(&mut voxel_world, chunk_key);
-                voxel_world.loaded_chunks.insert(chunk_key);
-            }
-        }
-    }
-
-    // Remove far chunks
-    let chunks_to_remove: Vec<IVec3> = voxel_world
-        .loaded_chunks
-        .iter()
-        .filter(|&&chunk| {
-            (chunk.x - chunk_pos.x).abs() > RENDER_DISTANCE
-                || (chunk.z - chunk_pos.z).abs() > RENDER_DISTANCE
-        })
-        .copied()
-        .collect();
-
-    for chunk in chunks_to_remove {
-        unload_chunk(&mut voxel_world, chunk);
-        voxel_world.loaded_chunks.remove(&chunk);
-    }
-}
-
-fn generate_chunk(voxel_world: &mut VoxelWorld, chunk_pos: IVec3) {
-    // Check if chunk already has voxels (player modifications), don't overwrite
-    let start_x = chunk_pos.x * CHUNK_SIZE;
-    let start_z = chunk_pos.z * CHUNK_SIZE;
-
-    // Check if this chunk already has any voxels
-    let mut has_existing_voxels = false;
-    for (&pos, _) in voxel_world.voxels.iter() {
-        if pos.x >= start_x
-            && pos.x < start_x + CHUNK_SIZE
-            && pos.z >= start_z
-            && pos.z < start_z + CHUNK_SIZE
-        {
-            has_existing_voxels = true;
-            break;
-        }
-    }
-
-    // If chunk already has voxels, just mark it dirty and return
-    if has_existing_voxels {
-        voxel_world.mark_chunk_dirty(chunk_pos);
-        return;
-    }
-
-    let perlin = Perlin::new(42);
-
-    for local_x in 0..CHUNK_SIZE {
-        for local_z in 0..CHUNK_SIZE {
-            let world_x = start_x + local_x;
-            let world_z = start_z + local_z;
-
-            // 使用多层噪声生成更丰富的地形
-            let base_height_noise = perlin.get([world_x as f64 * 0.02, world_z as f64 * 0.02]);
-            let detail_noise = perlin.get([world_x as f64 * 0.1, world_z as f64 * 0.1]) * 0.2;
-
-            // 增加地形起伏，高度范围约为2-10
-            let height = 4.0 + (base_height_noise + 1.0) * 3.0 + detail_noise * 3.0;
-            let height = height as i32;
-
-            for y in 0..=height.min(CHUNK_HEIGHT - 1) {
-                let pos = IVec3::new(world_x, y, world_z);
-
-                let voxel_type = if y == height {
-                    VoxelType::Grass
-                } else if y > height - 2 {
-                    VoxelType::Dirt
-                } else {
-                    VoxelType::Stone
-                };
-
-                voxel_world.set_voxel(pos, voxel_type);
-            }
-        }
-    }
-
-    // Mark chunk as dirty to generate mesh
-    voxel_world.mark_chunk_dirty(chunk_pos);
-}
-
-fn unload_chunk(voxel_world: &mut VoxelWorld, chunk_pos: IVec3) {
-    let start_x = chunk_pos.x * CHUNK_SIZE;
-    let start_z = chunk_pos.z * CHUNK_SIZE;
-
-    // Remove all voxels in this chunk
-    let mut voxels_to_remove = Vec::new();
-    for (&pos, _) in voxel_world.voxels.iter() {
-        if pos.x >= start_x
-            && pos.x < start_x + CHUNK_SIZE
-            && pos.z >= start_z
-            && pos.z < start_z + CHUNK_SIZE
-        {
-            voxels_to_remove.push(pos);
-        }
-    }
-
-    for pos in voxels_to_remove {
-        voxel_world.voxels.remove(&pos);
-    }
-}
-
-fn setup_lighting(mut commands: Commands) {
-    // 添加方向光源
-    commands.spawn((
-        DirectionalLight {
-            shadows_enabled: true,
-            ..default()
-        },
-        Transform::from_xyz(0.0, 10.0, 0.0)
-            .with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_4)),
-    ));
-
-    // 添加环境光
-    commands.insert_resource(AmbientLight {
-        color: Color::srgb(0.3, 0.3, 0.3),
-        brightness: 0.3,
-        affects_lightmapped_meshes: false,
-    });
 }
