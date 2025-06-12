@@ -2,7 +2,7 @@ use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use std::collections::HashSet;
 
-use crate::voxel::{Voxel, VOXEL_PRECISION};
+use crate::voxel::{Voxel, VOXEL_PRECISION, VOXEL_SIZE};
 use crate::terrain::TerrainGenerator;
 use crate::player::Player;
 
@@ -69,6 +69,15 @@ impl Chunk {
             self.voxels[x][y][z] = voxel;
         }
     }
+    
+    /// Convert voxel indices to world coordinates (returns voxel center)
+    pub fn voxel_to_world(&self, x: usize, y: usize, z: usize) -> Vec3 {
+        Vec3::new(
+            self.coord.x as f32 * CHUNK_SIZE as f32 + x as f32 * VOXEL_SIZE + VOXEL_SIZE / 2.0,
+            y as f32 * VOXEL_SIZE + VOXEL_SIZE / 2.0,
+            self.coord.z as f32 * CHUNK_SIZE as f32 + z as f32 * VOXEL_SIZE + VOXEL_SIZE / 2.0,
+        )
+    }
 }
 
 #[derive(Resource)]
@@ -83,6 +92,92 @@ impl Default for World {
             chunks: HashMap::new(),
             terrain_generator: TerrainGenerator::new(),
         }
+    }
+}
+
+impl World {
+    /// Convert world coordinates to chunk coordinate and voxel indices
+    /// Accepts both voxel center coordinates and any point within the voxel
+    pub fn world_to_voxel(&self, world_pos: Vec3) -> Option<(ChunkCoord, usize, usize, usize)> {
+        let chunk_coord = ChunkCoord::from_world_pos(world_pos);
+        
+        // Check if chunk exists
+        if !self.chunks.contains_key(&chunk_coord) {
+            return None;
+        }
+        
+        let chunk_world_x = chunk_coord.x as f32 * CHUNK_SIZE as f32;
+        let chunk_world_z = chunk_coord.z as f32 * CHUNK_SIZE as f32;
+        
+        let local_x = world_pos.x - chunk_world_x;
+        let local_y = world_pos.y;
+        let local_z = world_pos.z - chunk_world_z;
+        
+        // Handle negative coordinates within chunk bounds
+        if local_x < 0.0 || local_y < 0.0 || local_z < 0.0 {
+            return None;
+        }
+        
+        // Convert to voxel indices - use floor to handle both center and corner coordinates
+        let voxel_x = (local_x / VOXEL_SIZE).floor() as usize;
+        let voxel_y = (local_y / VOXEL_SIZE).floor() as usize;
+        let voxel_z = (local_z / VOXEL_SIZE).floor() as usize;
+        
+        if voxel_x < CHUNK_VOXELS_SIZE && 
+           voxel_y < CHUNK_VOXELS_HEIGHT && 
+           voxel_z < CHUNK_VOXELS_SIZE {
+            Some((chunk_coord, voxel_x, voxel_y, voxel_z))
+        } else {
+            None
+        }
+    }
+    
+    /// Get voxel at world position
+    pub fn get_voxel_at_world(&self, world_pos: Vec3, chunk_query: &Query<&Chunk>) -> Option<Voxel> {
+        if let Some((chunk_coord, x, y, z)) = self.world_to_voxel(world_pos) {
+            if let Some(chunk_entity) = self.chunks.get(&chunk_coord) {
+                if let Ok(chunk) = chunk_query.get(*chunk_entity) {
+                    return chunk.get_voxel(x, y, z).copied();
+                }
+            }
+        }
+        None
+    }
+    
+    /// Set voxel at world position
+    pub fn set_voxel_at_world(
+        &self, 
+        world_pos: Vec3, 
+        voxel: Voxel,
+        chunk_query: &mut Query<&mut Chunk>
+    ) -> bool {
+        if let Some((chunk_coord, x, y, z)) = self.world_to_voxel(world_pos) {
+            if let Some(chunk_entity) = self.chunks.get(&chunk_coord) {
+                if let Ok(mut chunk) = chunk_query.get_mut(*chunk_entity) {
+                    chunk.set_voxel(x, y, z, voxel);
+                    return true;
+                }
+            }
+        }
+        false
+    }
+    
+    /// Get the world position (center) of a voxel at given world coordinates
+    pub fn get_voxel_center_at_world(&self, world_pos: Vec3) -> Option<Vec3> {
+        if let Some((chunk_coord, x, y, z)) = self.world_to_voxel(world_pos) {
+            if let Some(_chunk_entity) = self.chunks.get(&chunk_coord) {
+                // We don't need to query the chunk, just calculate the center
+                let chunk_world_x = chunk_coord.x as f32 * CHUNK_SIZE as f32;
+                let chunk_world_z = chunk_coord.z as f32 * CHUNK_SIZE as f32;
+                
+                return Some(Vec3::new(
+                    chunk_world_x + x as f32 * VOXEL_SIZE + VOXEL_SIZE / 2.0,
+                    y as f32 * VOXEL_SIZE + VOXEL_SIZE / 2.0,
+                    chunk_world_z + z as f32 * VOXEL_SIZE + VOXEL_SIZE / 2.0,
+                ));
+            }
+        }
+        None
     }
 }
 

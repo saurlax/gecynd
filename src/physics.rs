@@ -1,4 +1,4 @@
-use crate::voxel::VOXEL_SIZE;
+use crate::voxel::{VOXEL_SIZE, VoxelFace};
 use crate::world::{CHUNK_VOXELS_HEIGHT, CHUNK_VOXELS_SIZE, Chunk, World};
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
@@ -94,17 +94,17 @@ fn add_voxel_geometry(
     z: usize,
 ) {
     let faces = [
-        (should_render_face_physics(chunk, x, y, z, -1, 0, 0), 0), // Left
-        (should_render_face_physics(chunk, x, y, z, 1, 0, 0), 1),  // Right
-        (should_render_face_physics(chunk, x, y, z, 0, -1, 0), 2), // Bottom
-        (should_render_face_physics(chunk, x, y, z, 0, 1, 0), 3),  // Top
-        (should_render_face_physics(chunk, x, y, z, 0, 0, -1), 4), // Back
-        (should_render_face_physics(chunk, x, y, z, 0, 0, 1), 5),  // Front
+        (should_render_face_physics(chunk, x, y, z, -1, 0, 0), VoxelFace::NegativeX),
+        (should_render_face_physics(chunk, x, y, z, 1, 0, 0), VoxelFace::PositiveX),
+        (should_render_face_physics(chunk, x, y, z, 0, -1, 0), VoxelFace::NegativeY),
+        (should_render_face_physics(chunk, x, y, z, 0, 1, 0), VoxelFace::PositiveY),
+        (should_render_face_physics(chunk, x, y, z, 0, 0, -1), VoxelFace::NegativeZ),
+        (should_render_face_physics(chunk, x, y, z, 0, 0, 1), VoxelFace::PositiveZ),
     ];
 
-    for (should_render, face_index) in faces.iter() {
+    for (should_render, face) in faces.iter() {
         if *should_render {
-            add_face_geometry(vertices, indices, pos, VOXEL_SIZE, *face_index);
+            add_face_geometry(vertices, indices, pos, VOXEL_SIZE, *face);
         }
     }
 }
@@ -146,69 +146,16 @@ fn add_face_geometry(
     indices: &mut Vec<[u32; 3]>,
     pos: Vec3,
     size: f32,
-    face_index: usize,
+    face: VoxelFace,
 ) {
     let start_vertex = vertices.len() as u32;
-
-    match face_index {
-        0 => {
-            // Left face (-X) - 与渲染系统保持一致的顶点顺序
-            vertices.extend_from_slice(&[
-                pos + Vec3::new(0.0, 0.0, 0.0),
-                pos + Vec3::new(0.0, 0.0, size),
-                pos + Vec3::new(0.0, size, size),
-                pos + Vec3::new(0.0, size, 0.0),
-            ]);
-        }
-        1 => {
-            // Right face (+X)
-            vertices.extend_from_slice(&[
-                pos + Vec3::new(size, 0.0, 0.0),
-                pos + Vec3::new(size, size, 0.0),
-                pos + Vec3::new(size, size, size),
-                pos + Vec3::new(size, 0.0, size),
-            ]);
-        }
-        2 => {
-            // Bottom face (-Y)
-            vertices.extend_from_slice(&[
-                pos + Vec3::new(0.0, 0.0, 0.0),
-                pos + Vec3::new(size, 0.0, 0.0),
-                pos + Vec3::new(size, 0.0, size),
-                pos + Vec3::new(0.0, 0.0, size),
-            ]);
-        }
-        3 => {
-            // Top face (+Y)
-            vertices.extend_from_slice(&[
-                pos + Vec3::new(0.0, size, 0.0),
-                pos + Vec3::new(0.0, size, size),
-                pos + Vec3::new(size, size, size),
-                pos + Vec3::new(size, size, 0.0),
-            ]);
-        }
-        4 => {
-            // Back face (-Z)
-            vertices.extend_from_slice(&[
-                pos + Vec3::new(0.0, 0.0, 0.0),
-                pos + Vec3::new(0.0, size, 0.0),
-                pos + Vec3::new(size, size, 0.0),
-                pos + Vec3::new(size, 0.0, 0.0),
-            ]);
-        }
-        5 => {
-            // Front face (+Z)
-            vertices.extend_from_slice(&[
-                pos + Vec3::new(0.0, 0.0, size),
-                pos + Vec3::new(size, 0.0, size),
-                pos + Vec3::new(size, size, size),
-                pos + Vec3::new(0.0, size, size),
-            ]);
-        }
-        _ => {}
+    let face_vertices = face.get_vertices(pos, size);
+    
+    // Convert to Vec3
+    for vertex in face_vertices.iter() {
+        vertices.push(Vec3::new(vertex[0], vertex[1], vertex[2]));
     }
 
-    // 确保与渲染系统相同的三角形绕序
     indices.push([start_vertex, start_vertex + 1, start_vertex + 2]);
     indices.push([start_vertex, start_vertex + 2, start_vertex + 3]);
 }

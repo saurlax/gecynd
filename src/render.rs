@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::render::render_asset::RenderAssetUsages;
 
-use crate::voxel::VOXEL_SIZE;
+use crate::voxel::{VOXEL_SIZE, VoxelFace};
 use crate::world::{CHUNK_SIZE, CHUNK_VOXELS_HEIGHT, CHUNK_VOXELS_SIZE, Chunk};
 use crate::player::PlayerInteraction;
 
@@ -12,11 +12,14 @@ pub struct ChunkMesh;
 #[derive(Component)]
 pub struct VoxelHighlight;
 
+#[derive(Component)]
+pub struct Crosshair;
+
 pub struct RenderPlugin;
 
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, setup_lighting)
+        app.add_systems(Startup, (setup_lighting, setup_crosshair))
             .add_systems(Update, (chunk_rendering_system, chunk_rerendering_system, voxel_highlight_system));
     }
 }
@@ -43,6 +46,52 @@ fn setup_lighting(mut commands: Commands) {
     });
 }
 
+fn setup_crosshair(mut commands: Commands) {
+    commands.spawn((
+        Crosshair,
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Percent(50.0),
+            top: Val::Percent(50.0),
+            width: Val::Px(20.0),
+            height: Val::Px(20.0),
+            margin: UiRect {
+                left: Val::Px(-10.0),
+                top: Val::Px(-10.0),
+                ..default()
+            },
+            ..default()
+        },
+        BackgroundColor(Color::NONE),
+    )).with_children(|parent| {
+        // Horizontal line
+        parent.spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(8.0),
+                top: Val::Px(9.0),
+                width: Val::Px(4.0),
+                height: Val::Px(2.0),
+                ..default()
+            },
+            BackgroundColor(Color::WHITE),
+        ));
+        
+        // Vertical line
+        parent.spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(9.0),
+                top: Val::Px(8.0),
+                width: Val::Px(2.0),
+                height: Val::Px(4.0),
+                ..default()
+            },
+            BackgroundColor(Color::WHITE),
+        ));
+    });
+}
+
 fn chunk_rendering_system(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -57,6 +106,7 @@ fn chunk_rendering_system(
                 metallic: 0.0,
                 perceptual_roughness: 0.8,
                 reflectance: 0.1,
+                cull_mode: None, // Disable backface culling to prevent disappearing faces
                 ..default()
             });
 
@@ -82,7 +132,6 @@ fn chunk_rerendering_system(
     chunk_query: Query<(Entity, &Chunk), (With<Mesh3d>, Without<ChunkMesh>)>,
 ) {
     for (entity, chunk) in chunk_query.iter() {
-        // 移除旧的渲染组件
         commands.entity(entity).remove::<Mesh3d>();
         commands.entity(entity).remove::<MeshMaterial3d<StandardMaterial>>();
         
@@ -93,6 +142,7 @@ fn chunk_rerendering_system(
                 metallic: 0.0,
                 perceptual_roughness: 0.8,
                 reflectance: 0.1,
+                cull_mode: None, // Disable backface culling to prevent disappearing faces
                 ..default()
             });
 
@@ -112,43 +162,37 @@ fn voxel_highlight_system(
     interaction: Res<PlayerInteraction>,
     highlight_query: Query<Entity, With<VoxelHighlight>>,
     chunk_query: Query<&crate::world::Chunk>,
-    _world: Res<crate::world::World>,
+    world: Res<crate::world::World>,
 ) {
     for entity in highlight_query.iter() {
         commands.entity(entity).despawn();
     }
     
-    if let Some((chunk_coord, x, y, z)) = interaction.selected_voxel {
-        if let Some(chunk_entity) = _world.chunks.get(&chunk_coord) {
-            if let Ok(chunk) = chunk_query.get(*chunk_entity) {
-                if let Some(voxel) = chunk.get_voxel(x, y, z) {
-                    if voxel.is_solid() {
-                        let world_pos = Vec3::new(
-                            chunk_coord.x as f32 * CHUNK_SIZE as f32 + x as f32 * VOXEL_SIZE,
-                            y as f32 * VOXEL_SIZE,
-                            chunk_coord.z as f32 * CHUNK_SIZE as f32 + z as f32 * VOXEL_SIZE,
-                        );
-                        
-                        let highlight_mesh = create_highlight_wireframe();
-                        let mesh_handle = meshes.add(highlight_mesh);
-                        let material_handle = materials.add(StandardMaterial {
-                            base_color: Color::BLACK,
-                            alpha_mode: AlphaMode::Blend,
-                            unlit: true,
-                            cull_mode: None,
-                            ..default()
-                        });
-                        
-                        commands.spawn((
-                            VoxelHighlight,
-                            Mesh3d(mesh_handle),
-                            MeshMaterial3d(material_handle),
-                            Transform::from_translation(world_pos),
-                            GlobalTransform::default(),
-                            Name::new("Voxel Highlight"),
-                        ));
-                    }
-                }
+    if let Some(selected_voxel_pos) = interaction.selected_voxel_world_pos {
+        // Verify the voxel still exists and is solid
+        if let Some(voxel) = world.get_voxel_at_world(selected_voxel_pos, &chunk_query) {
+            if voxel.is_solid() {
+                // Position highlight at voxel center, then offset to corner
+                let highlight_pos = selected_voxel_pos - Vec3::splat(VOXEL_SIZE / 2.0);
+                
+                let highlight_mesh = create_highlight_wireframe();
+                let mesh_handle = meshes.add(highlight_mesh);
+                let material_handle = materials.add(StandardMaterial {
+                    base_color: Color::BLACK,
+                    alpha_mode: AlphaMode::Blend,
+                    unlit: true,
+                    cull_mode: None,
+                    ..default()
+                });
+                
+                commands.spawn((
+                    VoxelHighlight,
+                    Mesh3d(mesh_handle),
+                    MeshMaterial3d(material_handle),
+                    Transform::from_translation(highlight_pos),
+                    GlobalTransform::default(),
+                    Name::new("Voxel Highlight"),
+                ));
             }
         }
     }
@@ -195,14 +239,11 @@ fn generate_chunk_mesh(chunk: &Chunk) -> Option<Mesh> {
     let mut normals = Vec::new();
     let mut uvs = Vec::new();
 
-    let mut face_count = 0;
-
     for x in 0..CHUNK_VOXELS_SIZE {
         for y in 0..CHUNK_VOXELS_HEIGHT {
             for z in 0..CHUNK_VOXELS_SIZE {
                 if let Some(voxel) = chunk.get_voxel(x, y, z) {
                     if voxel.is_solid() {
-                        let old_vertex_count = vertices.len();
                         add_voxel_faces(
                             &mut vertices,
                             &mut indices,
@@ -218,8 +259,6 @@ fn generate_chunk_mesh(chunk: &Chunk) -> Option<Mesh> {
                             y,
                             z,
                         );
-                        let new_faces = (vertices.len() - old_vertex_count) / 4;
-                        face_count += new_faces;
                     }
                 }
             }
@@ -254,17 +293,17 @@ fn add_voxel_faces(
     z: usize,
 ) {
     let faces = [
-        (should_render_face(chunk, x, y, z, -1, 0, 0), 0),
-        (should_render_face(chunk, x, y, z, 1, 0, 0), 1),
-        (should_render_face(chunk, x, y, z, 0, -1, 0), 2),
-        (should_render_face(chunk, x, y, z, 0, 1, 0), 3),
-        (should_render_face(chunk, x, y, z, 0, 0, -1), 4),
-        (should_render_face(chunk, x, y, z, 0, 0, 1), 5),
+        (should_render_face(chunk, x, y, z, -1, 0, 0), VoxelFace::NegativeX),
+        (should_render_face(chunk, x, y, z, 1, 0, 0), VoxelFace::PositiveX),
+        (should_render_face(chunk, x, y, z, 0, -1, 0), VoxelFace::NegativeY),
+        (should_render_face(chunk, x, y, z, 0, 1, 0), VoxelFace::PositiveY),
+        (should_render_face(chunk, x, y, z, 0, 0, -1), VoxelFace::NegativeZ),
+        (should_render_face(chunk, x, y, z, 0, 0, 1), VoxelFace::PositiveZ),
     ];
 
-    for (should_render, face_index) in faces.iter() {
+    for (should_render, face) in faces.iter() {
         if *should_render {
-            add_face(vertices, indices, normals, uvs, pos, *face_index);
+            add_face(vertices, indices, normals, uvs, pos, *face);
         }
     }
 }
@@ -282,6 +321,7 @@ fn should_render_face(
     let ny = y as i32 + dy;
     let nz = z as i32 + dz;
 
+    // If adjacent position is outside chunk bounds, render the face
     if nx < 0
         || nx >= CHUNK_VOXELS_SIZE as i32
         || ny < 0
@@ -292,6 +332,7 @@ fn should_render_face(
         return true;
     }
 
+    // If adjacent position is air or doesn't exist, render the face
     if let Some(neighbor_voxel) = chunk.get_voxel(nx as usize, ny as usize, nz as usize) {
         !neighbor_voxel.is_solid()
     } else {
@@ -305,80 +346,16 @@ fn add_face(
     normals: &mut Vec<[f32; 3]>,
     uvs: &mut Vec<[f32; 2]>,
     pos: Vec3,
-    face_index: usize,
+    face: VoxelFace,
 ) {
     let start_vertex = vertices.len() as u32;
-    let size = VOXEL_SIZE;
-
-    let (face_vertices, face_normal) = match face_index {
-        0 => (
-            [
-                // Left face (-X)
-                [pos.x, pos.y, pos.z],
-                [pos.x, pos.y, pos.z + size],
-                [pos.x, pos.y + size, pos.z + size],
-                [pos.x, pos.y + size, pos.z],
-            ],
-            [-1.0, 0.0, 0.0],
-        ),
-        1 => (
-            [
-                // Right face (+X)
-                [pos.x + size, pos.y, pos.z],
-                [pos.x + size, pos.y + size, pos.z],
-                [pos.x + size, pos.y + size, pos.z + size],
-                [pos.x + size, pos.y, pos.z + size],
-            ],
-            [1.0, 0.0, 0.0],
-        ),
-        2 => (
-            [
-                // Bottom face (-Y)
-                [pos.x, pos.y, pos.z],
-                [pos.x + size, pos.y, pos.z],
-                [pos.x + size, pos.y, pos.z + size],
-                [pos.x, pos.y, pos.z + size],
-            ],
-            [0.0, -1.0, 0.0],
-        ),
-        3 => (
-            [
-                // Top face (+Y)
-                [pos.x, pos.y + size, pos.z],
-                [pos.x, pos.y + size, pos.z + size],
-                [pos.x + size, pos.y + size, pos.z + size],
-                [pos.x + size, pos.y + size, pos.z],
-            ],
-            [0.0, 1.0, 0.0],
-        ),
-        4 => (
-            [
-                // Back face (-Z)
-                [pos.x, pos.y, pos.z],
-                [pos.x, pos.y + size, pos.z],
-                [pos.x + size, pos.y + size, pos.z],
-                [pos.x + size, pos.y, pos.z],
-            ],
-            [0.0, 0.0, -1.0],
-        ),
-        5 => (
-            [
-                // Front face (+Z)
-                [pos.x, pos.y, pos.z + size],
-                [pos.x + size, pos.y, pos.z + size],
-                [pos.x + size, pos.y + size, pos.z + size],
-                [pos.x, pos.y + size, pos.z + size],
-            ],
-            [0.0, 0.0, 1.0],
-        ),
-        _ => return,
-    };
+    let face_vertices = face.get_vertices(pos, VOXEL_SIZE);
+    let face_normal = face.get_normal();
 
     vertices.extend_from_slice(&face_vertices);
-    normals.extend_from_slice(&[face_normal; 4]);
+    normals.extend_from_slice(&[[face_normal.x, face_normal.y, face_normal.z]; 4]);
     uvs.extend_from_slice(&[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
 
-    // 确保逆时针绕序
     indices.extend_from_slice(&[
         start_vertex,
         start_vertex + 1,

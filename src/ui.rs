@@ -17,6 +17,7 @@ fn ui_system(
     mut contexts: EguiContexts, 
     player_query: Query<&Transform, With<Player>>,
     interaction: Res<PlayerInteraction>,
+    world: Res<crate::world::World>,
 ) {
     if let Ok(player_transform) = player_query.single() {
         let pos = player_transform.translation;
@@ -29,17 +30,28 @@ fn ui_system(
                     pos.x, pos.y, pos.z
                 ));
                 
-                if let Some((chunk_coord, x, y, z)) = interaction.selected_voxel {
-                    ui.label(format!(
-                        "Selected: Chunk({}, {}) Voxel({}, {}, {})",
-                        chunk_coord.x, chunk_coord.z, x, y, z
-                    ));
+                if let Some(selected_pos) = interaction.selected_voxel_world_pos {
+                    if let Some((chunk_coord, x, y, z)) = world.world_to_voxel(selected_pos) {
+                        ui.label(format!(
+                            "Selected: Chunk({}, {}) Voxel({}, {}, {})",
+                            chunk_coord.x, chunk_coord.z, x, y, z
+                        ));
+                        ui.label(format!(
+                            "World Pos: ({:.1}, {:.1}, {:.1})",
+                            selected_pos.x, selected_pos.y, selected_pos.z
+                        ));
+                        
+                        if let Some(face) = interaction.hit_face {
+                            ui.label(format!("Hit Face: {:?}", face));
+                        }
+                    }
                 } else {
                     ui.label("Selected: None");
                 }
                 
                 ui.label("Left Click: Break Block");
                 ui.label("Right Click: Place Block");
+                ui.label("Shift: Sprint");
             });
     }
 }
