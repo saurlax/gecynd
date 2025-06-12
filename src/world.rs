@@ -185,13 +185,25 @@ impl World {
     }
 }
 
+#[derive(Resource)]
+pub struct DebugAabbState {
+    pub enabled: bool,
+}
+
+impl Default for DebugAabbState {
+    fn default() -> Self {
+        Self { enabled: false }
+    }
+}
+
 pub struct WorldPlugin;
 
 impl Plugin for WorldPlugin {
     fn build(&self, app: &mut App) {
         app
             .init_resource::<World>()
-            .add_systems(Update, chunk_loading_system);
+            .init_resource::<DebugAabbState>()
+            .add_systems(Update, (chunk_loading_system, chunk_unloading_system, debug_state_system));
     }
 }
 
@@ -220,5 +232,41 @@ fn chunk_loading_system(
             let entity = commands.spawn(chunk).id();
             world.chunks.insert(coord, entity);
         }
+    }
+}
+
+fn chunk_unloading_system(
+    mut commands: Commands,
+    mut world: ResMut<World>,
+    player_query: Query<&Transform, With<Player>>,
+) {
+    if let Ok(player_transform) = player_query.single() {
+        let player_chunk = ChunkCoord::from_world_pos(player_transform.translation);
+        let unload_distance = RENDER_DISTANCE + 2;
+        
+        let mut chunks_to_unload = Vec::new();
+        
+        for (&chunk_coord, &chunk_entity) in world.chunks.iter() {
+            let distance_x = (chunk_coord.x - player_chunk.x).abs();
+            let distance_z = (chunk_coord.z - player_chunk.z).abs();
+            
+            if distance_x > unload_distance || distance_z > unload_distance {
+                chunks_to_unload.push((chunk_coord, chunk_entity));
+            }
+        }
+        
+        for (coord, entity) in chunks_to_unload {
+            commands.entity(entity).despawn();
+            world.chunks.remove(&coord);
+        }
+    }
+}
+
+fn debug_state_system(
+    mut debug_state: ResMut<DebugAabbState>,
+    keys: Res<ButtonInput<KeyCode>>,
+) {
+    if keys.just_pressed(KeyCode::F1) {
+        debug_state.enabled = !debug_state.enabled;
     }
 }

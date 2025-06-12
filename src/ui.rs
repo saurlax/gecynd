@@ -18,6 +18,7 @@ fn ui_system(
     player_query: Query<&Transform, With<Player>>,
     interaction: Res<PlayerInteraction>,
     world: Res<crate::world::World>,
+    debug_state: Res<crate::world::DebugAabbState>,
 ) {
     if let Ok(player_transform) = player_query.single() {
         let pos = player_transform.translation;
@@ -49,9 +50,13 @@ fn ui_system(
                     ui.label("Selected: None");
                 }
                 
+                ui.separator();
+                ui.label("Controls:");
                 ui.label("Left Click: Break Block");
                 ui.label("Right Click: Place Block");
                 ui.label("Shift: Sprint");
+                ui.label(format!("F1: Toggle AABB Debug ({})", 
+                    if debug_state.enabled { "ON" } else { "OFF" }));
             });
     }
 }
