@@ -2,15 +2,14 @@ use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use std::collections::HashSet;
 
-use crate::voxel::{Voxel, VOXEL_SIZE, VOXEL_PRECISION};
+use crate::voxel::{Voxel, VOXEL_PRECISION};
 use crate::terrain::TerrainGenerator;
 use crate::player::Player;
 
-pub const CHUNK_SIZE: usize = 16; // 区块在世界中的大小（单位）
-pub const CHUNK_HEIGHT: usize = 256; // 区块在世界中的高度（单位）
+pub const CHUNK_SIZE: usize = 16;
+pub const CHUNK_HEIGHT: usize = 256;
 pub const RENDER_DISTANCE: i32 = 5;
 
-// 实际的体素数组大小
 pub const CHUNK_VOXELS_SIZE: usize = CHUNK_SIZE * VOXEL_PRECISION as usize;
 pub const CHUNK_VOXELS_HEIGHT: usize = CHUNK_HEIGHT * VOXEL_PRECISION as usize;
 
@@ -41,7 +40,6 @@ pub struct Chunk {
 
 impl Chunk {
     pub fn new(coord: ChunkCoord) -> Self {
-        // 使用Vec来避免栈分配
         let mut voxels = Vec::with_capacity(CHUNK_VOXELS_SIZE);
         for _ in 0..CHUNK_VOXELS_SIZE {
             let mut y_vec = Vec::with_capacity(CHUNK_VOXELS_HEIGHT);
@@ -107,7 +105,6 @@ fn chunk_loading_system(
         let player_chunk = ChunkCoord::from_world_pos(player_transform.translation);
         let mut chunks_to_generate = HashSet::new();
         
-        // 检查玩家周围的区块
         for x in (player_chunk.x - RENDER_DISTANCE)..=(player_chunk.x + RENDER_DISTANCE) {
             for z in (player_chunk.z - RENDER_DISTANCE)..=(player_chunk.z + RENDER_DISTANCE) {
                 let coord = ChunkCoord::new(x, z);
@@ -117,7 +114,6 @@ fn chunk_loading_system(
             }
         }
         
-        // 生成新区块
         for coord in chunks_to_generate {
             let mut chunk = Chunk::new(coord);
             world.terrain_generator.generate_chunk(&mut chunk);

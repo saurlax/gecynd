@@ -1,4 +1,4 @@
-pub const VOXEL_PRECISION: u32 = 1; // 从32减少到8，避免内存问题
+pub const VOXEL_PRECISION: u32 = 1;
 pub const VOXEL_SIZE: f32 = 1.0 / VOXEL_PRECISION as f32;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
