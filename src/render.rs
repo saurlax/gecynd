@@ -20,7 +20,12 @@ pub struct RenderPlugin;
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, (setup_lighting, setup_crosshair))
-            .add_systems(Update, (chunk_rendering_system, chunk_rerendering_system, voxel_highlight_system));
+            .add_systems(Update, (
+                chunk_rendering_system, 
+                chunk_rerendering_system, 
+                voxel_highlight_system,
+                force_rerender_system
+            ));
     }
 }
 
@@ -106,20 +111,26 @@ fn chunk_rendering_system(
                 metallic: 0.0,
                 perceptual_roughness: 0.8,
                 reflectance: 0.1,
-                cull_mode: None, // Disable backface culling to prevent disappearing faces
+                cull_mode: None,
+                double_sided: true,
                 ..default()
             });
+
+            // 确保Transform使用正确的世界坐标
+            let chunk_world_pos = Vec3::new(
+                chunk.coord.x as f32 * CHUNK_SIZE as f32,
+                0.0,
+                chunk.coord.z as f32 * CHUNK_SIZE as f32,
+            );
 
             commands.entity(entity).insert((
                 ChunkMesh,
                 Mesh3d(mesh_handle),
                 MeshMaterial3d(material_handle),
-                Transform::from_xyz(
-                    chunk.coord.x as f32 * CHUNK_SIZE as f32,
-                    0.0,
-                    chunk.coord.z as f32 * CHUNK_SIZE as f32,
-                ),
+                Transform::from_translation(chunk_world_pos),
                 GlobalTransform::default(),
+                // 强制禁用视锥剔除
+                Visibility::Visible,
             ));
         }
     }
@@ -142,7 +153,8 @@ fn chunk_rerendering_system(
                 metallic: 0.0,
                 perceptual_roughness: 0.8,
                 reflectance: 0.1,
-                cull_mode: None, // Disable backface culling to prevent disappearing faces
+                cull_mode: None,
+                double_sided: true,
                 ..default()
             });
 
@@ -150,6 +162,8 @@ fn chunk_rerendering_system(
                 ChunkMesh,
                 Mesh3d(mesh_handle),
                 MeshMaterial3d(material_handle),
+                // 强制禁用视锥剔除
+                Visibility::Visible,
             ));
         }
     }
@@ -244,16 +258,19 @@ fn generate_chunk_mesh(chunk: &Chunk) -> Option<Mesh> {
             for z in 0..CHUNK_VOXELS_SIZE {
                 if let Some(voxel) = chunk.get_voxel(x, y, z) {
                     if voxel.is_solid() {
+                        // 使用统一的坐标计算，确保与world坐标系一致
+                        let local_pos = Vec3::new(
+                            x as f32 * VOXEL_SIZE,
+                            y as f32 * VOXEL_SIZE,
+                            z as f32 * VOXEL_SIZE,
+                        );
+                        
                         add_voxel_faces(
                             &mut vertices,
                             &mut indices,
                             &mut normals,
                             &mut uvs,
-                            Vec3::new(
-                                x as f32 * VOXEL_SIZE,
-                                y as f32 * VOXEL_SIZE,
-                                z as f32 * VOXEL_SIZE,
-                            ),
+                            local_pos,
                             chunk,
                             x,
                             y,
@@ -273,6 +290,22 @@ fn generate_chunk_mesh(chunk: &Chunk) -> Option<Mesh> {
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::RENDER_WORLD,
     );
+    
+    // 计算正确的包围盒来避免视锥剔除问题
+    let mut min_pos = Vec3::splat(f32::MAX);
+    let mut max_pos = Vec3::splat(f32::MIN);
+    
+    for vertex in &vertices {
+        let pos = Vec3::new(vertex[0], vertex[1], vertex[2]);
+        min_pos = min_pos.min(pos);
+        max_pos = max_pos.max(pos);
+    }
+    
+    // 扩展包围盒以确保不会被错误剔除
+    let padding = VOXEL_SIZE * 0.1;
+    min_pos -= Vec3::splat(padding);
+    max_pos += Vec3::splat(padding);
+    
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vertices);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
@@ -364,4 +397,14 @@ fn add_face(
         start_vertex + 2,
         start_vertex + 3,
     ]);
+}
+
+fn force_rerender_system(
+    mut commands: Commands,
+    rerender_query: Query<Entity, With<crate::player::NeedsRerender>>,
+) {
+    for entity in rerender_query.iter() {
+        // 移除重新渲染标记，让正常的渲染系统处理
+        commands.entity(entity).remove::<crate::player::NeedsRerender>();
+    }
 }

@@ -16,15 +16,15 @@ impl TerrainGenerator {
     }
     
     pub fn generate_chunk(&self, chunk: &mut Chunk) {
-        let chunk_world_x = chunk.coord.x as f32 * CHUNK_SIZE as f32;
-        let chunk_world_z = chunk.coord.z as f32 * CHUNK_SIZE as f32;
+        // 使用统一的VOXEL_SIZE坐标计算
+        let chunk_world_x = chunk.coord.x as f32 * (CHUNK_SIZE as f32 * VOXEL_SIZE);
+        let chunk_world_z = chunk.coord.z as f32 * (CHUNK_SIZE as f32 * VOXEL_SIZE);
         
         for x in 0..CHUNK_VOXELS_SIZE {
             for z in 0..CHUNK_VOXELS_SIZE {
                 let world_x = chunk_world_x + x as f32 * VOXEL_SIZE;
                 let world_z = chunk_world_z + z as f32 * VOXEL_SIZE;
                 
-                // 生成高度图
                 let height = self.get_height(world_x as f64, world_z as f64);
                 let grass_height = height;
                 let dirt_height = height - 3.0;
@@ -40,7 +40,6 @@ impl TerrainGenerator {
                             VoxelType::Dirt
                         }
                     } else {
-                        // 检查洞穴
                         let cave_noise = self.cave_noise.get([
                             world_x as f64 * 0.02,
                             world_y as f64 * 0.02,

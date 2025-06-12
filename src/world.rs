@@ -25,9 +25,11 @@ impl ChunkCoord {
     }
     
     pub fn from_world_pos(world_pos: Vec3) -> Self {
+        // 使用VOXEL_SIZE统一坐标计算
+        let chunk_size_world = CHUNK_SIZE as f32 * VOXEL_SIZE;
         Self {
-            x: (world_pos.x / CHUNK_SIZE as f32).floor() as i32,
-            z: (world_pos.z / CHUNK_SIZE as f32).floor() as i32,
+            x: (world_pos.x / chunk_size_world).floor() as i32,
+            z: (world_pos.z / chunk_size_world).floor() as i32,
         }
     }
 }
@@ -71,11 +73,15 @@ impl Chunk {
     }
     
     /// Convert voxel indices to world coordinates (returns voxel center)
+    /// 使用统一的VOXEL_SIZE坐标计算
     pub fn voxel_to_world(&self, x: usize, y: usize, z: usize) -> Vec3 {
+        let chunk_world_x = self.coord.x as f32 * (CHUNK_SIZE as f32 * VOXEL_SIZE);
+        let chunk_world_z = self.coord.z as f32 * (CHUNK_SIZE as f32 * VOXEL_SIZE);
+        
         Vec3::new(
-            self.coord.x as f32 * CHUNK_SIZE as f32 + x as f32 * VOXEL_SIZE + VOXEL_SIZE / 2.0,
+            chunk_world_x + x as f32 * VOXEL_SIZE + VOXEL_SIZE / 2.0,
             y as f32 * VOXEL_SIZE + VOXEL_SIZE / 2.0,
-            self.coord.z as f32 * CHUNK_SIZE as f32 + z as f32 * VOXEL_SIZE + VOXEL_SIZE / 2.0,
+            chunk_world_z + z as f32 * VOXEL_SIZE + VOXEL_SIZE / 2.0,
         )
     }
 }
@@ -97,28 +103,26 @@ impl Default for World {
 
 impl World {
     /// Convert world coordinates to chunk coordinate and voxel indices
-    /// Accepts both voxel center coordinates and any point within the voxel
+    /// 确保使用VOXEL_SIZE进行所有坐标转换
     pub fn world_to_voxel(&self, world_pos: Vec3) -> Option<(ChunkCoord, usize, usize, usize)> {
         let chunk_coord = ChunkCoord::from_world_pos(world_pos);
         
-        // Check if chunk exists
         if !self.chunks.contains_key(&chunk_coord) {
             return None;
         }
         
-        let chunk_world_x = chunk_coord.x as f32 * CHUNK_SIZE as f32;
-        let chunk_world_z = chunk_coord.z as f32 * CHUNK_SIZE as f32;
+        // 使用统一的坐标计算
+        let chunk_world_x = chunk_coord.x as f32 * (CHUNK_SIZE as f32 * VOXEL_SIZE);
+        let chunk_world_z = chunk_coord.z as f32 * (CHUNK_SIZE as f32 * VOXEL_SIZE);
         
         let local_x = world_pos.x - chunk_world_x;
         let local_y = world_pos.y;
         let local_z = world_pos.z - chunk_world_z;
         
-        // Handle negative coordinates within chunk bounds
         if local_x < 0.0 || local_y < 0.0 || local_z < 0.0 {
             return None;
         }
         
-        // Convert to voxel indices - use floor to handle both center and corner coordinates
         let voxel_x = (local_x / VOXEL_SIZE).floor() as usize;
         let voxel_y = (local_y / VOXEL_SIZE).floor() as usize;
         let voxel_z = (local_z / VOXEL_SIZE).floor() as usize;
@@ -163,12 +167,12 @@ impl World {
     }
     
     /// Get the world position (center) of a voxel at given world coordinates
+    /// 使用统一的VOXEL_SIZE坐标计算
     pub fn get_voxel_center_at_world(&self, world_pos: Vec3) -> Option<Vec3> {
         if let Some((chunk_coord, x, y, z)) = self.world_to_voxel(world_pos) {
             if let Some(_chunk_entity) = self.chunks.get(&chunk_coord) {
-                // We don't need to query the chunk, just calculate the center
-                let chunk_world_x = chunk_coord.x as f32 * CHUNK_SIZE as f32;
-                let chunk_world_z = chunk_coord.z as f32 * CHUNK_SIZE as f32;
+                let chunk_world_x = chunk_coord.x as f32 * (CHUNK_SIZE as f32 * VOXEL_SIZE);
+                let chunk_world_z = chunk_coord.z as f32 * (CHUNK_SIZE as f32 * VOXEL_SIZE);
                 
                 return Some(Vec3::new(
                     chunk_world_x + x as f32 * VOXEL_SIZE + VOXEL_SIZE / 2.0,

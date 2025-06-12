@@ -59,42 +59,49 @@ impl VoxelFace {
         use bevy::prelude::Vec3;
         let Vec3 { x, y, z } = pos;
         
+        // 确保所有面都使用正确的逆时针绕序（从外部看向面时）
         match self {
             VoxelFace::NegativeX => [
-                [x, y, z],
-                [x, y + size, z],
-                [x, y + size, z + size],
+                // Left face (-X) - 从外部看逆时针
                 [x, y, z + size],
+                [x, y + size, z + size],
+                [x, y + size, z],
+                [x, y, z],
             ],
             VoxelFace::PositiveX => [
+                // Right face (+X) - 从外部看逆时针
                 [x + size, y, z],
-                [x + size, y, z + size],
-                [x + size, y + size, z + size],
                 [x + size, y + size, z],
+                [x + size, y + size, z + size],
+                [x + size, y, z + size],
             ],
             VoxelFace::NegativeY => [
+                // Bottom face (-Y) - 从外部看逆时针
                 [x, y, z],
-                [x, y, z + size],
-                [x + size, y, z + size],
                 [x + size, y, z],
+                [x + size, y, z + size],
+                [x, y, z + size],
             ],
             VoxelFace::PositiveY => [
-                [x, y + size, z],
-                [x + size, y + size, z],
-                [x + size, y + size, z + size],
+                // Top face (+Y) - 从外部看逆时针
                 [x, y + size, z + size],
+                [x + size, y + size, z + size],
+                [x + size, y + size, z],
+                [x, y + size, z],
             ],
             VoxelFace::NegativeZ => [
+                // Back face (-Z) - 从外部看逆时针
                 [x, y, z],
-                [x + size, y, z],
-                [x + size, y + size, z],
                 [x, y + size, z],
+                [x + size, y + size, z],
+                [x + size, y, z],
             ],
             VoxelFace::PositiveZ => [
-                [x, y, z + size],
-                [x, y + size, z + size],
-                [x + size, y + size, z + size],
+                // Front face (+Z) - 从外部看逆时针
                 [x + size, y, z + size],
+                [x + size, y + size, z + size],
+                [x, y + size, z + size],
+                [x, y, z + size],
             ],
         }
     }

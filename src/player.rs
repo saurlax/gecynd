@@ -453,8 +453,15 @@ fn voxel_interaction(
 fn mark_chunk_for_update(commands: &mut Commands, world: &World, world_pos: Vec3) {
     if let Some((chunk_coord, _, _, _)) = world.world_to_voxel(world_pos) {
         if let Some(chunk_entity) = world.chunks.get(&chunk_coord) {
+            // 强制重新生成网格，确保立即可见
             commands.entity(*chunk_entity).remove::<crate::render::ChunkMesh>();
             commands.entity(*chunk_entity).remove::<crate::physics::ChunkPhysics>();
+            
+            // 添加一个标记确保在下一帧重新渲染
+            commands.entity(*chunk_entity).insert(NeedsRerender);
         }
     }
 }
+
+#[derive(Component)]
+pub struct NeedsRerender;
