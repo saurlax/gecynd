@@ -1,7 +1,7 @@
-use bevy::pbr::{NotShadowCaster, NotShadowReceiver};
+use bevy::light::{NotShadowCaster, NotShadowReceiver};
 use bevy::prelude::*;
-use bevy::render::mesh::{Indices, PrimitiveTopology};
-use bevy::render::render_asset::RenderAssetUsages;
+use bevy::mesh::{Indices, PrimitiveTopology};
+use bevy::asset::RenderAssetUsages;
 
 use crate::player::PlayerInteraction;
 use crate::voxel::{VOXEL_SIZE, VoxelFace};
@@ -326,13 +326,13 @@ fn create_debug_aabb_for_chunk(
     let uvs = vec![[0.0, 0.0]; 8];
 
     let mut mesh = Mesh::new(
-        bevy::render::mesh::PrimitiveTopology::LineList,
-        bevy::render::render_asset::RenderAssetUsages::RENDER_WORLD,
+        PrimitiveTopology::LineList,
+        RenderAssetUsages::RENDER_WORLD,
     );
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vertices);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
-    mesh.insert_indices(bevy::render::mesh::Indices::U32(indices));
+    mesh.insert_indices(Indices::U32(indices));
 
     let mesh_handle = meshes.add(mesh);
     let material_handle = materials.add(StandardMaterial {

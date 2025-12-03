@@ -32,8 +32,8 @@ fn main() {
 }
 
 fn handle_window_close(
-    mut close_events: EventReader<WindowCloseRequested>,
-    mut exit: EventWriter<AppExit>,
+    mut close_events: MessageReader<WindowCloseRequested>,
+    mut exit: MessageWriter<AppExit>,
 ) {
     for _ in close_events.read() {
         exit.write(AppExit::Success);

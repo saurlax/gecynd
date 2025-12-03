@@ -2,7 +2,7 @@ use crate::voxel::{VOXEL_SIZE, Voxel, VoxelType, VoxelFace};
 use crate::world::World;
 use bevy::input::mouse::MouseMotion;
 use bevy::prelude::*;
-use bevy::window::{CursorGrabMode, PrimaryWindow, WindowFocused};
+use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow, WindowFocused};
 use bevy_rapier3d::prelude::*;
 
 #[derive(Component)]
@@ -145,13 +145,13 @@ fn player_movement(
 }
 
 fn player_look(
-    mut mouse_motion: EventReader<MouseMotion>,
+    mut mouse_motion: MessageReader<MouseMotion>,
     mut player_query: Query<&mut Transform, With<Player>>,
     mut camera_query: Query<&mut Transform, (With<PlayerCamera>, Without<Player>)>,
-    window_query: Query<&Window, With<PrimaryWindow>>,
+    cursor_query: Query<&CursorOptions, With<PrimaryWindow>>,
 ) {
-    if let Ok(window) = window_query.single() {
-        if window.cursor_options.grab_mode != CursorGrabMode::Locked {
+    if let Ok(cursor_options) = cursor_query.single() {
+        if cursor_options.grab_mode != CursorGrabMode::Locked {
             for _ in mouse_motion.read() {}
             return;
         }
@@ -184,60 +184,58 @@ fn player_look(
 fn handle_cursor_grab(
     keys: Res<ButtonInput<KeyCode>>,
     mouse_input: Res<ButtonInput<MouseButton>>,
-    mut window_query: Query<&mut Window, With<PrimaryWindow>>,
+    mut cursor_query: Query<&mut CursorOptions, With<PrimaryWindow>>,
+    window_query: Query<&Window, With<PrimaryWindow>>,
     mut cursor_state: ResMut<CursorState>,
 ) {
-    if let Ok(mut window) = window_query.single_mut() {
+    if let (Ok(mut cursor_options), Ok(window)) = (cursor_query.single_mut(), window_query.single()) {
         if keys.just_pressed(KeyCode::Escape) {
             cursor_state.was_locked_before_focus_loss = false;
-            release_cursor(&mut window);
+            release_cursor(&mut cursor_options);
         } else if mouse_input.just_pressed(MouseButton::Left) {
-            if window.cursor_options.grab_mode == CursorGrabMode::None && window.focused {
-                lock_cursor(&mut window);
+            if cursor_options.grab_mode == CursorGrabMode::None && window.focused {
+                lock_cursor(&mut cursor_options);
             }
         }
     }
 }
 
 fn handle_window_focus_events(
-    mut focus_events: EventReader<WindowFocused>,
-    mut window_query: Query<&mut Window, With<PrimaryWindow>>,
+    mut focus_events: MessageReader<WindowFocused>,
+    mut cursor_query: Query<&mut CursorOptions, With<PrimaryWindow>>,
     mut cursor_state: ResMut<CursorState>,
 ) {
     for event in focus_events.read() {
-        if let Ok(mut window) = window_query.single_mut() {
+        if let Ok(mut cursor_options) = cursor_query.single_mut() {
             if event.focused {
                 if cursor_state.was_locked_before_focus_loss {
-                    lock_cursor(&mut window);
+                    lock_cursor(&mut cursor_options);
                     cursor_state.was_locked_before_focus_loss = false;
                 }
             } else {
-                if window.cursor_options.grab_mode == CursorGrabMode::Locked {
+                if cursor_options.grab_mode == CursorGrabMode::Locked {
                     cursor_state.was_locked_before_focus_loss = true;
                 }
-                release_cursor(&mut window);
+                release_cursor(&mut cursor_options);
             }
         }
     }
 }
 
-fn setup_cursor_grab(mut window_query: Query<&mut Window, With<PrimaryWindow>>) {
-    if let Ok(mut window) = window_query.single_mut() {
-        lock_cursor(&mut window);
+fn setup_cursor_grab(mut cursor_query: Query<&mut CursorOptions, With<PrimaryWindow>>) {
+    if let Ok(mut cursor_options) = cursor_query.single_mut() {
+        lock_cursor(&mut cursor_options);
     }
 }
 
-fn lock_cursor(window: &mut Window) {
-    window.cursor_options.grab_mode = CursorGrabMode::Locked;
-    window.cursor_options.visible = false;
-    
-    // Move cursor to center of window
-    window.set_cursor_position(Some(Vec2::new(window.width() / 2.0, window.height() / 2.0)));
+fn lock_cursor(cursor_options: &mut CursorOptions) {
+    cursor_options.grab_mode = CursorGrabMode::Locked;
+    cursor_options.visible = false;
 }
 
-fn release_cursor(window: &mut Window) {
-    window.cursor_options.grab_mode = CursorGrabMode::None;
-    window.cursor_options.visible = true;
+fn release_cursor(cursor_options: &mut CursorOptions) {
+    cursor_options.grab_mode = CursorGrabMode::None;
+    cursor_options.visible = true;
 }
 
 fn raycast_solid_voxel(
@@ -386,7 +384,7 @@ fn voxel_interaction(
     world: Res<World>,
     interaction: Res<PlayerInteraction>,
     mouse_input: Res<ButtonInput<MouseButton>>,
-    window_query: Query<&Window, With<PrimaryWindow>>,
+    cursor_query: Query<&CursorOptions, With<PrimaryWindow>>,
     mut chunk_query_set: ParamSet<(
         Query<&crate::world::Chunk>,
         Query<&mut crate::world::Chunk>,
@@ -394,8 +392,8 @@ fn voxel_interaction(
     player_query: Query<&Transform, With<Player>>,
     time: Res<Time>,
 ) {
-    if let Ok(window) = window_query.single() {
-        if window.cursor_options.grab_mode != CursorGrabMode::Locked {
+    if let Ok(cursor_options) = cursor_query.single() {
+        if cursor_options.grab_mode != CursorGrabMode::Locked {
             return;
         }
     }
