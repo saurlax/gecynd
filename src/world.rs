@@ -72,18 +72,6 @@ impl Chunk {
         }
     }
     
-    /// Convert voxel indices to world coordinates (returns voxel center)
-    /// 使用统一的VOXEL_SIZE坐标计算
-    pub fn voxel_to_world(&self, x: usize, y: usize, z: usize) -> Vec3 {
-        let chunk_world_x = self.coord.x as f32 * (CHUNK_SIZE as f32 * VOXEL_SIZE);
-        let chunk_world_z = self.coord.z as f32 * (CHUNK_SIZE as f32 * VOXEL_SIZE);
-        
-        Vec3::new(
-            chunk_world_x + x as f32 * VOXEL_SIZE + VOXEL_SIZE / 2.0,
-            y as f32 * VOXEL_SIZE + VOXEL_SIZE / 2.0,
-            chunk_world_z + z as f32 * VOXEL_SIZE + VOXEL_SIZE / 2.0,
-        )
-    }
 }
 
 #[derive(Resource)]

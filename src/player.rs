@@ -258,8 +258,8 @@ fn raycast_solid_voxel(
                 let voxel_center = world.get_voxel_center_at_world(current_pos).unwrap_or(current_pos);
                 
                 // 使用精确的射线-立方体相交算法
-                if let Some(hit_info) = raycast_cube(start, normalized_dir, voxel_center, VOXEL_SIZE) {
-                    return Some((voxel_center, hit_info.normal));
+                if let Some(hit_normal) = raycast_cube(start, normalized_dir, voxel_center, VOXEL_SIZE) {
+                    return Some((voxel_center, hit_normal));
                 }
             }
         }
@@ -268,14 +268,7 @@ fn raycast_solid_voxel(
     None
 }
 
-#[derive(Debug)]
-struct RayHitInfo {
-    point: Vec3,
-    normal: Vec3,
-    distance: f32,
-}
-
-fn raycast_cube(ray_origin: Vec3, ray_dir: Vec3, cube_center: Vec3, cube_size: f32) -> Option<RayHitInfo> {
+fn raycast_cube(ray_origin: Vec3, ray_dir: Vec3, cube_center: Vec3, cube_size: f32) -> Option<Vec3> {
     let half_size = cube_size / 2.0;
     let cube_min = cube_center - Vec3::splat(half_size);
     let cube_max = cube_center + Vec3::splat(half_size);
@@ -337,11 +330,7 @@ fn raycast_cube(ray_origin: Vec3, ray_dir: Vec3, cube_center: Vec3, cube_size: f
         }
     };
     
-    Some(RayHitInfo {
-        point: hit_point,
-        normal,
-        distance: t,
-    })
+    Some(normal)
 }
 
 fn voxel_selection(

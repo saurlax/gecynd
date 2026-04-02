@@ -16,9 +16,6 @@ struct PlayerInfoText;
 #[derive(Component)]
 struct SelectedBlockText;
 
-#[derive(Component)]
-struct ControlsText;
-
 fn setup_ui(mut commands: Commands) {
     // 创建UI根节点
     commands

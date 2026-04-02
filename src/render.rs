@@ -52,7 +52,7 @@ fn setup_lighting(mut commands: Commands) {
         )),
     ));
 
-    commands.insert_resource(AmbientLight {
+    commands.insert_resource(GlobalAmbientLight {
         color: Color::WHITE,
         brightness: 60.0,
         affects_lightmapped_meshes: false,
