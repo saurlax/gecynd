@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use bevy::window::{WindowCloseRequested, ExitCondition};
+use bevy::window::{ExitCondition, WindowCloseRequested};
 
 mod physics;
 mod player;
@@ -26,7 +26,13 @@ fn main() {
             ..default()
         }))
         .insert_resource(ClearColor(Color::srgb(0.53, 0.81, 0.98)))
-        .add_plugins((WorldPlugin, PlayerPlugin, PhysicsPlugin, RenderPlugin, UiPlugin))
+        .add_plugins((
+            WorldPlugin,
+            PlayerPlugin,
+            PhysicsPlugin,
+            RenderPlugin,
+            UiPlugin,
+        ))
         .add_systems(Update, handle_window_close)
         .run();
 }
