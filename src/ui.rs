@@ -1,4 +1,5 @@
 use crate::player::{Player, PlayerInteraction};
+use crate::world::InitialWorldGeneration;
 use bevy::prelude::*;
 
 pub struct UiPlugin;
@@ -15,6 +16,12 @@ struct PlayerInfoText;
 
 #[derive(Component)]
 struct SelectedBlockText;
+
+#[derive(Component)]
+struct LoadingText;
+
+#[derive(Component)]
+struct LoadingRoot;
 
 fn setup_ui(mut commands: Commands) {
     commands
@@ -69,6 +76,8 @@ fn setup_ui(mut commands: Commands) {
                         "Right Click: Place Block",
                         "Shift: Sprint",
                         "F1: Toggle AABB Debug",
+                        "F2: Toggle Render Wireframe",
+                        "F3: Toggle Physics Wireframe",
                     ];
                     
                     for control_text in controls {
@@ -83,15 +92,50 @@ fn setup_ui(mut commands: Commands) {
                     }
                 });
         });
+
+    commands
+        .spawn((
+            LoadingRoot,
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45)),
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                LoadingText,
+                Text::new("Generating terrain..."),
+                TextFont {
+                    font_size: 36.0,
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+            ));
+        });
 }
 
 fn update_ui_text(
     player_query: Query<&Transform, With<Player>>,
     interaction: Res<PlayerInteraction>,
     world: Res<crate::world::World>,
+    generation_state: Res<InitialWorldGeneration>,
+    loading_root_query: Query<Entity, With<LoadingRoot>>,
+    mut commands: Commands,
     mut player_info_query: Query<&mut Text, (With<PlayerInfoText>, Without<SelectedBlockText>)>,
     mut selected_block_query: Query<&mut Text, (With<SelectedBlockText>, Without<PlayerInfoText>)>,
 ) {
+    if generation_state.finished {
+        if let Ok(entity) = loading_root_query.single() {
+            commands.entity(entity).despawn_children();
+            commands.entity(entity).despawn();
+        }
+    }
+
     if let Ok(player_transform) = player_query.single() {
         if let Ok(mut text) = player_info_query.single_mut() {
             let pos = player_transform.translation;

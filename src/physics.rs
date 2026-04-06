@@ -1,12 +1,10 @@
 use crate::voxel::{VOXEL_SIZE, VoxelFace};
-use crate::world::{CHUNK_VOXELS_HEIGHT, CHUNK_VOXELS_SIZE, Chunk, World};
+use crate::world::{Chunk, DebugViewMode, CHUNK_VOXELS_HEIGHT, CHUNK_VOXELS_SIZE};
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 
-#[derive(Resource, Default)]
-pub struct PhysicsDebugState {
-    pub enabled: bool,
-}
+#[derive(Component)]
+struct PendingPhysicsCollider;
 
 pub struct PhysicsPlugin;
 
@@ -16,46 +14,41 @@ impl Plugin for PhysicsPlugin {
             RapierPhysicsPlugin::<NoUserData>::default(),
             RapierDebugRenderPlugin::default().disabled(),
         ))
-        .init_resource::<PhysicsDebugState>()
-        .add_systems(Update, toggle_physics_debug)
-        .add_systems(Update, update_chunk_physics);
+        .add_systems(Update, sync_physics_debug_mode)
+        .add_systems(Update, queue_chunk_physics_builds)
+        .add_systems(Update, process_chunk_physics_builds);
     }
 }
 
 #[derive(Component)]
 pub struct ChunkPhysics;
 
-fn toggle_physics_debug(
-    keys: Res<ButtonInput<KeyCode>>,
-    mut debug_state: ResMut<PhysicsDebugState>,
+fn sync_physics_debug_mode(
+    debug_view_mode: Res<DebugViewMode>,
     mut render_context: ResMut<DebugRenderContext>,
 ) {
-    if keys.just_pressed(KeyCode::F2) {
-        debug_state.enabled = !debug_state.enabled;
-        render_context.enabled = debug_state.enabled;
+    render_context.enabled = debug_view_mode.physics_wireframe;
+}
+
+fn queue_chunk_physics_builds(
+    mut commands: Commands,
+    chunk_query: Query<(Entity, &Chunk), (Without<Collider>, Without<PendingPhysicsCollider>)>,
+) {
+    for (entity, chunk) in chunk_query.iter() {
+        if chunk.get_voxel(0, 0, 0).is_some() {
+            commands.entity(entity).insert(PendingPhysicsCollider);
+        }
     }
 }
 
-fn update_chunk_physics(
+fn process_chunk_physics_builds(
     mut commands: Commands,
-    _world: Res<World>,
-    chunk_query: Query<(Entity, &Chunk), Without<ChunkPhysics>>,
-    chunk_requery: Query<(Entity, &Chunk), (With<RigidBody>, Without<ChunkPhysics>)>,
+    chunk_query: Query<(Entity, &Chunk), With<PendingPhysicsCollider>>,
 ) {
     for (entity, chunk) in chunk_query.iter() {
         let collider = generate_chunk_collider(chunk);
-        if let Some(collider) = collider {
-            commands
-                .entity(entity)
-                .insert((ChunkPhysics, RigidBody::Fixed, collider));
-        }
-    }
+        commands.entity(entity).remove::<PendingPhysicsCollider>();
 
-    for (entity, chunk) in chunk_requery.iter() {
-        commands.entity(entity).remove::<RigidBody>();
-        commands.entity(entity).remove::<Collider>();
-        
-        let collider = generate_chunk_collider(chunk);
         if let Some(collider) = collider {
             commands
                 .entity(entity)

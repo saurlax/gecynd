@@ -1,11 +1,12 @@
 use bevy::light::{NotShadowCaster, NotShadowReceiver};
+use bevy::pbr::wireframe::{Wireframe, WireframePlugin};
 use bevy::prelude::*;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::asset::RenderAssetUsages;
 
 use crate::player::PlayerInteraction;
 use crate::voxel::{VOXEL_SIZE, VoxelFace};
-use crate::world::{chunk_world_height, chunk_world_origin, CHUNK_VOXELS_HEIGHT, CHUNK_VOXELS_SIZE, Chunk};
+use crate::world::{chunk_world_height, chunk_world_origin, Chunk, DebugViewMode, CHUNK_VOXELS_HEIGHT, CHUNK_VOXELS_SIZE};
 
 #[derive(Component)]
 pub struct ChunkMesh;
@@ -19,6 +20,9 @@ pub struct Crosshair;
 #[derive(Component)]
 pub struct DebugAabb;
 
+#[derive(Component)]
+struct PendingRenderMesh;
+
 pub struct RenderPlugin;
 
 #[derive(Resource)]
@@ -28,12 +32,14 @@ struct ChunkMaterial {
 
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, (setup_lighting, setup_chunk_material, setup_crosshair))
+        app.add_plugins(WireframePlugin::default())
+            .add_systems(Startup, (setup_lighting, setup_chunk_material, setup_crosshair))
             .add_systems(
                 Update,
                 (
-                    chunk_rendering_system.before(debug_aabb_system),
-                    chunk_rerendering_system.before(debug_aabb_system),
+                    sync_render_wireframe_mode,
+                    queue_chunk_render_builds.before(process_chunk_render_builds),
+                    process_chunk_render_builds.before(debug_aabb_system),
                     voxel_highlight_system,
                     force_rerender_system,
                     debug_aabb_system,
@@ -126,21 +132,39 @@ fn setup_crosshair(mut commands: Commands) {
         });
 }
 
-fn chunk_rendering_system(
+fn queue_chunk_render_builds(
+    mut commands: Commands,
+    chunk_query: Query<(Entity, &Chunk), (Without<Mesh3d>, Without<PendingRenderMesh>)>,
+) {
+    for (entity, chunk) in chunk_query.iter() {
+        if chunk.get_voxel(0, 0, 0).is_some() {
+            commands.entity(entity).insert(PendingRenderMesh);
+        }
+    }
+}
+
+fn process_chunk_render_builds(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     chunk_material: Res<ChunkMaterial>,
-    chunk_query: Query<(Entity, &Chunk), (Without<Mesh3d>, Without<ChunkMesh>)>,
+    chunk_query: Query<(Entity, &Chunk), With<PendingRenderMesh>>,
     debug_state: Res<crate::world::DebugAabbState>,
+    debug_view_mode: Res<DebugViewMode>,
 ) {
     for (entity, chunk) in chunk_query.iter() {
         if let Some(mesh) = generate_chunk_mesh(chunk) {
             let mesh_handle = meshes.add(mesh);
-
             let chunk_world_pos = chunk_world_origin(chunk.coord);
+            let wireframe = if debug_view_mode.render_wireframe {
+                Some(Wireframe)
+            } else {
+                None
+            };
 
-            commands.entity(entity).insert((
+            let mut entity_commands = commands.entity(entity);
+            entity_commands.remove::<PendingRenderMesh>();
+            entity_commands.insert((
                 ChunkMesh,
                 Mesh3d(mesh_handle),
                 MeshMaterial3d(chunk_material.handle.clone()),
@@ -149,34 +173,33 @@ fn chunk_rendering_system(
                 Visibility::Visible,
             ));
 
+            if let Some(wireframe) = wireframe {
+                entity_commands.insert(wireframe);
+            }
+
             if debug_state.enabled {
                 create_debug_aabb_for_chunk(&mut commands, &mut meshes, &mut materials, entity);
             }
+        } else {
+            commands.entity(entity).remove::<PendingRenderMesh>();
         }
     }
 }
 
-fn chunk_rerendering_system(
+fn sync_render_wireframe_mode(
+    debug_view_mode: Res<DebugViewMode>,
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    chunk_material: Res<ChunkMaterial>,
-    chunk_query: Query<(Entity, &Chunk), (With<Mesh3d>, Without<ChunkMesh>)>,
+    chunk_query: Query<Entity, With<ChunkMesh>>,
+    wireframe_query: Query<(), With<Wireframe>>,
 ) {
-    for (entity, chunk) in chunk_query.iter() {
-        commands.entity(entity).remove::<Mesh3d>();
-        commands
-            .entity(entity)
-            .remove::<MeshMaterial3d<StandardMaterial>>();
+    let render_mode_enabled = debug_view_mode.render_wireframe;
 
-        if let Some(mesh) = generate_chunk_mesh(chunk) {
-            let mesh_handle = meshes.add(mesh);
-
-            commands.entity(entity).insert((
-                ChunkMesh,
-                Mesh3d(mesh_handle),
-                MeshMaterial3d(chunk_material.handle.clone()),
-                Visibility::Visible,
-            ));
+    for entity in chunk_query.iter() {
+        let has_wireframe = wireframe_query.get(entity).is_ok();
+        if render_mode_enabled && !has_wireframe {
+            commands.entity(entity).insert(Wireframe);
+        } else if !render_mode_enabled && has_wireframe {
+            commands.entity(entity).remove::<Wireframe>();
         }
     }
 }

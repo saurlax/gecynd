@@ -2,20 +2,18 @@ use noise::{NoiseFn, Perlin};
 use crate::world::{chunk_world_origin, Chunk, CHUNK_VOXELS_SIZE, CHUNK_VOXELS_HEIGHT};
 use crate::voxel::{Voxel, VoxelType, VOXEL_SIZE};
 
-const TERRAIN_BASE_HEIGHT_METERS: f32 = 4.0;
-const TERRAIN_VARIATION_METERS: f32 = 4.0;
+const TERRAIN_BASE_HEIGHT_METERS: f32 = 4.5;
+const TERRAIN_VARIATION_METERS: f32 = 0.8;
 const DIRT_LAYER_THICKNESS_METERS: f32 = 0.5;
 
 pub struct TerrainGenerator {
     height_noise: Perlin,
-    cave_noise: Perlin,
 }
 
 impl TerrainGenerator {
     pub fn new() -> Self {
         Self {
             height_noise: Perlin::new(12345),
-            cave_noise: Perlin::new(54321),
         }
     }
     
@@ -33,7 +31,6 @@ impl TerrainGenerator {
                 
                 for y in 0..CHUNK_VOXELS_HEIGHT {
                     let yi = y as i32;
-                    let world_y = y as f32 * VOXEL_SIZE;
                     let voxel_type = if yi > surface_voxel_y {
                         VoxelType::Air
                     } else if yi == surface_voxel_y {
@@ -41,17 +38,7 @@ impl TerrainGenerator {
                     } else if yi >= surface_voxel_y - dirt_voxels {
                         VoxelType::Dirt
                     } else {
-                        let cave_noise = self.cave_noise.get([
-                            world_x as f64 * 0.02,
-                            world_y as f64 * 0.02,
-                            world_z as f64 * 0.02,
-                        ]);
-                        
-                        if cave_noise > 0.3 {
-                            VoxelType::Air
-                        } else {
-                            VoxelType::Stone
-                        }
+                        VoxelType::Stone
                     };
                     
                     chunk.set_voxel(x, y, z, Voxel::new(voxel_type));
@@ -61,7 +48,7 @@ impl TerrainGenerator {
     }
     
     fn get_height(&self, x: f64, z: f64) -> f64 {
-        let scale = 0.08;
+        let scale = 0.025;
         let height = self.height_noise.get([x * scale, z * scale]);
         (TERRAIN_BASE_HEIGHT_METERS + (height as f32 + 1.0) * TERRAIN_VARIATION_METERS) as f64
     }

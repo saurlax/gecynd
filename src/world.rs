@@ -1,14 +1,15 @@
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
-use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 
 use crate::voxel::{Voxel, VOXEL_SIZE};
 use crate::terrain::TerrainGenerator;
-use crate::player::Player;
+use crate::player::{spawn_player, Player};
 
 pub const CHUNK_SIZE: usize = 32;
 pub const CHUNK_HEIGHT: usize = 256;
 pub const VISIBLE_RADIUS_METERS: f32 = 16.0;
+pub const INITIAL_LOAD_RADIUS_CHUNKS: i32 = 3;
 
 pub const CHUNK_VOXELS_SIZE: usize = CHUNK_SIZE;
 pub const CHUNK_VOXELS_HEIGHT: usize = CHUNK_HEIGHT;
@@ -31,6 +32,16 @@ pub fn chunk_world_origin(coord: ChunkCoord) -> Vec3 {
 
 pub fn render_distance_chunks() -> i32 {
     ((VISIBLE_RADIUS_METERS / chunk_world_size()).ceil() as i32).max(1)
+}
+
+pub fn initial_player_spawn_position() -> Vec3 {
+    Vec3::new(8.0, chunk_world_height() + 2.0, 8.0)
+}
+
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DebugViewMode {
+    pub render_wireframe: bool,
+    pub physics_wireframe: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -96,14 +107,31 @@ impl Chunk {
 #[derive(Resource)]
 pub struct World {
     pub chunks: HashMap<ChunkCoord, Entity>,
-    pub terrain_generator: TerrainGenerator,
+    pub pending_chunks: HashMap<ChunkCoord, Arc<Mutex<Option<Chunk>>>>,
 }
 
 impl Default for World {
     fn default() -> Self {
         Self {
             chunks: HashMap::new(),
-            terrain_generator: TerrainGenerator::new(),
+            pending_chunks: HashMap::new(),
+        }
+    }
+}
+
+#[derive(Resource)]
+pub struct InitialWorldGeneration {
+    pub started: bool,
+    pub finished: bool,
+    pub result: Arc<Mutex<Option<Vec<Chunk>>>>,
+}
+
+impl Default for InitialWorldGeneration {
+    fn default() -> Self {
+        Self {
+            started: false,
+            finished: false,
+            result: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -205,20 +233,146 @@ impl Plugin for WorldPlugin {
         app
             .init_resource::<World>()
             .init_resource::<DebugAabbState>()
-            .add_systems(Update, (chunk_loading_system, chunk_unloading_system, debug_state_system));
+            .init_resource::<DebugViewMode>()
+            .init_resource::<InitialWorldGeneration>()
+            .add_systems(Startup, start_initial_world_generation)
+            .add_systems(
+                Update,
+                (
+                    complete_initial_world_generation,
+                    complete_pending_chunk_generation_system,
+                    chunk_loading_system,
+                    chunk_unloading_system,
+                    debug_view_mode_system,
+                    debug_state_system,
+                ),
+            );
+    }
+}
+
+fn queue_chunk_generation(world: &mut World, coord: ChunkCoord) {
+    if world.chunks.contains_key(&coord) || world.pending_chunks.contains_key(&coord) {
+        return;
+    }
+
+    let result = Arc::new(Mutex::new(None));
+    world.pending_chunks.insert(coord, Arc::clone(&result));
+
+    std::thread::spawn(move || {
+        let terrain_generator = TerrainGenerator::new();
+        let mut chunk = Chunk::new(coord);
+        terrain_generator.generate_chunk(&mut chunk);
+
+        if let Ok(mut guard) = result.lock() {
+            *guard = Some(chunk);
+        }
+    });
+}
+
+fn start_initial_world_generation(mut generation_state: ResMut<InitialWorldGeneration>) {
+    if generation_state.started {
+        return;
+    }
+
+    generation_state.started = true;
+    let result = Arc::clone(&generation_state.result);
+    let spawn_chunk = ChunkCoord::from_world_pos(initial_player_spawn_position());
+
+    std::thread::spawn(move || {
+        let terrain_generator = TerrainGenerator::new();
+        let mut chunks = Vec::new();
+
+        for x in (spawn_chunk.x - INITIAL_LOAD_RADIUS_CHUNKS)..=(spawn_chunk.x + INITIAL_LOAD_RADIUS_CHUNKS) {
+            for z in (spawn_chunk.z - INITIAL_LOAD_RADIUS_CHUNKS)..=(spawn_chunk.z + INITIAL_LOAD_RADIUS_CHUNKS) {
+                let dx = x - spawn_chunk.x;
+                let dz = z - spawn_chunk.z;
+                if dx * dx + dz * dz > INITIAL_LOAD_RADIUS_CHUNKS * INITIAL_LOAD_RADIUS_CHUNKS {
+                    continue;
+                }
+
+                let coord = ChunkCoord::new(x, z);
+                let mut chunk = Chunk::new(coord);
+                terrain_generator.generate_chunk(&mut chunk);
+                chunks.push(chunk);
+            }
+        }
+
+        if let Ok(mut guard) = result.lock() {
+            *guard = Some(chunks);
+        }
+    });
+}
+
+fn complete_initial_world_generation(
+    mut commands: Commands,
+    mut world: ResMut<World>,
+    mut generation_state: ResMut<InitialWorldGeneration>,
+) {
+    if generation_state.finished {
+        return;
+    }
+
+    let mut result_guard = match generation_state.result.try_lock() {
+        Ok(guard) => guard,
+        Err(_) => return,
+    };
+
+    let Some(chunks) = result_guard.take() else {
+        return;
+    };
+    drop(result_guard);
+
+    for chunk in chunks {
+        let coord = chunk.coord;
+        let entity = commands.spawn(chunk).id();
+        world.chunks.insert(coord, entity);
+    }
+
+    spawn_player(&mut commands);
+    generation_state.finished = true;
+}
+
+fn complete_pending_chunk_generation_system(
+    mut commands: Commands,
+    mut world: ResMut<World>,
+    player_query: Query<&Transform, With<Player>>,
+) {
+    let mut ready_chunks: Vec<(ChunkCoord, Chunk)> = world
+        .pending_chunks
+        .iter()
+        .filter_map(|(coord, result)| {
+            let Ok(mut guard) = result.try_lock() else {
+                return None;
+            };
+
+            guard.take().map(|chunk| (*coord, chunk))
+        })
+        .collect();
+
+    if let Ok(player_transform) = player_query.single() {
+        let player_chunk = ChunkCoord::from_world_pos(player_transform.translation);
+        ready_chunks.sort_by_key(|(coord, _)| {
+            let dx = coord.x - player_chunk.x;
+            let dz = coord.z - player_chunk.z;
+            dx * dx + dz * dz
+        });
+    }
+
+    for (coord, chunk) in ready_chunks {
+        world.pending_chunks.remove(&coord);
+        let entity = commands.spawn(chunk).id();
+        world.chunks.insert(coord, entity);
     }
 }
 
 fn chunk_loading_system(
-    mut commands: Commands,
     mut world: ResMut<World>,
     player_query: Query<&Transform, With<Player>>,
 ) {
     if let Ok(player_transform) = player_query.single() {
         let player_chunk = ChunkCoord::from_world_pos(player_transform.translation);
         let render_distance = render_distance_chunks();
-        let mut chunks_to_generate = HashSet::new();
-        
+
         for x in (player_chunk.x - render_distance)..=(player_chunk.x + render_distance) {
             for z in (player_chunk.z - render_distance)..=(player_chunk.z + render_distance) {
                 let dx = x - player_chunk.x;
@@ -228,18 +382,8 @@ fn chunk_loading_system(
                 }
 
                 let coord = ChunkCoord::new(x, z);
-                if !world.chunks.contains_key(&coord) {
-                    chunks_to_generate.insert(coord);
-                }
+                queue_chunk_generation(&mut world, coord);
             }
-        }
-        
-        for coord in chunks_to_generate {
-            let mut chunk = Chunk::new(coord);
-            world.terrain_generator.generate_chunk(&mut chunk);
-            
-            let entity = commands.spawn(chunk).id();
-            world.chunks.insert(coord, entity);
         }
     }
 }
@@ -277,5 +421,18 @@ fn debug_state_system(
 ) {
     if keys.just_pressed(KeyCode::F1) {
         debug_state.enabled = !debug_state.enabled;
+    }
+}
+
+fn debug_view_mode_system(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut debug_view_mode: ResMut<DebugViewMode>,
+) {
+    if keys.just_pressed(KeyCode::F2) {
+        debug_view_mode.render_wireframe = !debug_view_mode.render_wireframe;
+    }
+
+    if keys.just_pressed(KeyCode::F3) {
+        debug_view_mode.physics_wireframe = !debug_view_mode.physics_wireframe;
     }
 }

@@ -1,5 +1,5 @@
 use crate::voxel::{VOXEL_SIZE, Voxel, VoxelType, VoxelFace};
-use crate::world::{chunk_world_origin, Chunk, World, CHUNK_VOXELS_HEIGHT, CHUNK_VOXELS_SIZE};
+use crate::world::{initial_player_spawn_position, InitialWorldGeneration, World};
 use bevy::input::mouse::MouseMotion;
 use bevy::prelude::*;
 use bevy::time::Fixed;
@@ -18,9 +18,6 @@ pub struct Player;
 
 #[derive(Component)]
 pub struct PlayerCamera;
-
-#[derive(Component)]
-pub struct NeedsTerrainPlacement;
 
 #[derive(Component, Default)]
 pub struct PlayerMotor {
@@ -63,7 +60,7 @@ impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PlayerInteraction>()
             .init_resource::<CursorState>()
-            .add_systems(Startup, (spawn_player, setup_cursor_grab))
+            .add_systems(Startup, setup_cursor_grab)
             .add_systems(
                 Update,
                 (
@@ -76,7 +73,6 @@ impl Plugin for PlayerPlugin {
             .add_systems(
                 Update,
                 (
-                    align_player_to_terrain,
                     player_look,
                     voxel_interaction,
                     voxel_selection,
@@ -86,12 +82,11 @@ impl Plugin for PlayerPlugin {
     }
 }
 
-fn spawn_player(mut commands: Commands) {
+pub fn spawn_player(commands: &mut Commands) {
     let player = commands
         .spawn((
             Player,
             PlayerMotor::default(),
-            NeedsTerrainPlacement,
             RigidBody::KinematicPositionBased,
             Collider::cuboid(0.25, 1.0, 0.25),
             KinematicCharacterController {
@@ -104,8 +99,7 @@ fn spawn_player(mut commands: Commands) {
                 snap_to_ground: Some(CharacterLength::Absolute(0.1)),
                 ..default()
             },
-            // Spawn at a safe provisional height, then snap to terrain once chunks load.
-            Transform::from_xyz(8.0, 24.0, 8.0),
+            Transform::from_translation(initial_player_spawn_position()),
             GlobalTransform::default(),
         ))
         .id();
@@ -187,50 +181,6 @@ fn player_movement(
     }
 }
 
-fn align_player_to_terrain(
-    mut commands: Commands,
-    mut player_query: Query<(Entity, &mut Transform), (With<Player>, With<NeedsTerrainPlacement>)>,
-    world: Res<World>,
-    chunk_query: Query<&Chunk>,
-) {
-    for (entity, mut transform) in player_query.iter_mut() {
-        let chunk_coord = crate::world::ChunkCoord::from_world_pos(transform.translation);
-        let Some(chunk_entity) = world.chunks.get(&chunk_coord) else {
-            continue;
-        };
-
-        let Ok(chunk) = chunk_query.get(*chunk_entity) else {
-            continue;
-        };
-
-        let chunk_origin = chunk_world_origin(chunk_coord);
-        let local_x = ((transform.translation.x - chunk_origin.x) / VOXEL_SIZE).floor() as i32;
-        let local_z = ((transform.translation.z - chunk_origin.z) / VOXEL_SIZE).floor() as i32;
-
-        if local_x < 0
-            || local_x >= CHUNK_VOXELS_SIZE as i32
-            || local_z < 0
-            || local_z >= CHUNK_VOXELS_SIZE as i32
-        {
-            continue;
-        }
-
-        let x = local_x as usize;
-        let z = local_z as usize;
-
-        let top_solid_y = (0..CHUNK_VOXELS_HEIGHT)
-            .rev()
-            .find(|&y| chunk.get_voxel(x, y, z).is_some_and(|voxel| voxel.is_solid()));
-
-        if let Some(surface_y) = top_solid_y {
-            let surface_top_world = (surface_y as f32 + 1.0) * VOXEL_SIZE;
-            // Player collider half-height is 1.0m.
-            transform.translation.y = surface_top_world + 1.05;
-            commands.entity(entity).remove::<NeedsTerrainPlacement>();
-        }
-    }
-}
-
 fn player_look(
     mut mouse_motion: MessageReader<MouseMotion>,
     mut player_query: Query<&mut Transform, With<Player>>,
@@ -273,7 +223,15 @@ fn handle_cursor_grab(
     mouse_input: Res<ButtonInput<MouseButton>>,
     mut window_cursor_query: Query<(&mut Window, &mut CursorOptions), With<PrimaryWindow>>,
     mut cursor_state: ResMut<CursorState>,
+    generation_state: Res<InitialWorldGeneration>,
 ) {
+    if !generation_state.finished {
+        if let Ok((_window, mut cursor_options)) = window_cursor_query.single_mut() {
+            release_cursor(&mut cursor_options);
+        }
+        return;
+    }
+
     if let Ok((mut window, mut cursor_options)) = window_cursor_query.single_mut() {
         if keys.just_pressed(KeyCode::Escape)
             || keys.just_pressed(KeyCode::SuperLeft)
@@ -334,10 +292,10 @@ fn sync_cursor_with_window_focus(
 }
 
 fn setup_cursor_grab(
-    mut window_cursor_query: Query<(&mut Window, &mut CursorOptions), With<PrimaryWindow>>,
+    mut window_cursor_query: Query<&mut CursorOptions, With<PrimaryWindow>>,
 ) {
-    if let Ok((mut window, mut cursor_options)) = window_cursor_query.single_mut() {
-        lock_cursor(&mut window, &mut cursor_options);
+    if let Ok(mut cursor_options) = window_cursor_query.single_mut() {
+        release_cursor(&mut cursor_options);
     }
 }
 
@@ -543,10 +501,14 @@ fn voxel_interaction(
 fn mark_chunk_for_update(commands: &mut Commands, world: &World, world_pos: Vec3) {
     if let Some((chunk_coord, _, _, _)) = world.world_to_voxel(world_pos) {
         if let Some(chunk_entity) = world.chunks.get(&chunk_coord) {
-            commands.entity(*chunk_entity).remove::<crate::render::ChunkMesh>();
-            commands.entity(*chunk_entity).remove::<crate::physics::ChunkPhysics>();
-
-            commands.entity(*chunk_entity).insert(NeedsRerender);
+            commands
+                .entity(*chunk_entity)
+                .remove::<crate::render::ChunkMesh>()
+                .remove::<Mesh3d>()
+                .remove::<MeshMaterial3d<StandardMaterial>>()
+                .remove::<crate::physics::ChunkPhysics>()
+                .remove::<Collider>()
+                .insert(NeedsRerender);
         }
     }
 }
