@@ -1,14 +1,14 @@
-pub const VOXEL_PRECISION: u32 = 1;
-pub const VOXEL_SIZE: f32 = 1.0 / VOXEL_PRECISION as f32;
+pub const VOXELS_PER_METER: f32 = 16.0;
+pub const VOXEL_SIZE: f32 = 1.0 / VOXELS_PER_METER;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum VoxelFace {
-    NegativeX = 0, // Left face
-    PositiveX = 1, // Right face
-    NegativeY = 2, // Bottom face
-    PositiveY = 3, // Top face
-    NegativeZ = 4, // Back face
-    PositiveZ = 5, // Front face
+    NegativeX = 0,
+    PositiveX = 1,
+    NegativeY = 2,
+    PositiveY = 3,
+    NegativeZ = 4,
+    PositiveZ = 5,
 }
 
 impl VoxelFace {
@@ -58,46 +58,39 @@ impl VoxelFace {
     pub fn get_vertices(&self, pos: bevy::prelude::Vec3, size: f32) -> [[f32; 3]; 4] {
         use bevy::prelude::Vec3;
         let Vec3 { x, y, z } = pos;
-        
-        // 确保所有面都使用正确的逆时针绕序（从外部看向面时）
+
         match self {
             VoxelFace::NegativeX => [
-                // Left face (-X) - 从外部看逆时针
                 [x, y, z + size],
                 [x, y + size, z + size],
                 [x, y + size, z],
                 [x, y, z],
             ],
             VoxelFace::PositiveX => [
-                // Right face (+X) - 从外部看逆时针
                 [x + size, y, z],
                 [x + size, y + size, z],
                 [x + size, y + size, z + size],
                 [x + size, y, z + size],
             ],
             VoxelFace::NegativeY => [
-                // Bottom face (-Y) - 从外部看逆时针
                 [x, y, z],
                 [x + size, y, z],
                 [x + size, y, z + size],
                 [x, y, z + size],
             ],
             VoxelFace::PositiveY => [
-                // Top face (+Y) - 从外部看逆时针
                 [x, y + size, z + size],
                 [x + size, y + size, z + size],
                 [x + size, y + size, z],
                 [x, y + size, z],
             ],
             VoxelFace::NegativeZ => [
-                // Back face (-Z) - 从外部看逆时针
                 [x, y, z],
                 [x, y + size, z],
                 [x + size, y + size, z],
                 [x + size, y, z],
             ],
             VoxelFace::PositiveZ => [
-                // Front face (+Z) - 从外部看逆时针
                 [x + size, y, z + size],
                 [x + size, y + size, z + size],
                 [x, y + size, z + size],

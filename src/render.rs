@@ -5,7 +5,7 @@ use bevy::asset::RenderAssetUsages;
 
 use crate::player::PlayerInteraction;
 use crate::voxel::{VOXEL_SIZE, VoxelFace};
-use crate::world::{CHUNK_SIZE, CHUNK_VOXELS_HEIGHT, CHUNK_VOXELS_SIZE, Chunk};
+use crate::world::{chunk_world_height, chunk_world_origin, CHUNK_VOXELS_HEIGHT, CHUNK_VOXELS_SIZE, Chunk};
 
 #[derive(Component)]
 pub struct ChunkMesh;
@@ -79,7 +79,6 @@ fn setup_crosshair(mut commands: Commands) {
             BackgroundColor(Color::NONE),
         ))
         .with_children(|parent| {
-            // Horizontal line
             parent.spawn((
                 Node {
                     position_type: PositionType::Absolute,
@@ -92,7 +91,6 @@ fn setup_crosshair(mut commands: Commands) {
                 BackgroundColor(Color::WHITE),
             ));
 
-            // Vertical line
             parent.spawn((
                 Node {
                     position_type: PositionType::Absolute,
@@ -127,11 +125,7 @@ fn chunk_rendering_system(
                 ..default()
             });
 
-            let chunk_world_pos = Vec3::new(
-                chunk.coord.x as f32 * CHUNK_SIZE as f32,
-                0.0,
-                chunk.coord.z as f32 * CHUNK_SIZE as f32,
-            );
+            let chunk_world_pos = chunk_world_origin(chunk.coord);
 
             commands.entity(entity).insert((
                 ChunkMesh,
@@ -142,7 +136,6 @@ fn chunk_rendering_system(
                 Visibility::Visible,
             ));
 
-            // 如果调试模式开启，为新chunk创建调试AABB作为子实体
             if debug_state.enabled {
                 create_debug_aabb_for_chunk(&mut commands, &mut meshes, &mut materials, entity);
             }
@@ -178,7 +171,6 @@ fn chunk_rerendering_system(
                 ChunkMesh,
                 Mesh3d(mesh_handle),
                 MeshMaterial3d(material_handle),
-                // 强制禁用视锥剔除
                 Visibility::Visible,
             ));
         }
@@ -199,10 +191,8 @@ fn voxel_highlight_system(
     }
 
     if let Some(selected_voxel_pos) = interaction.selected_voxel_world_pos {
-        // Verify the voxel still exists and is solid
         if let Some(voxel) = world.get_voxel_at_world(selected_voxel_pos, &chunk_query) {
             if voxel.is_solid() {
-                // Position highlight at voxel center, then offset to corner
                 let highlight_pos = selected_voxel_pos - Vec3::splat(VOXEL_SIZE / 2.0);
 
                 let highlight_mesh = create_highlight_wireframe();
@@ -270,9 +260,7 @@ fn debug_aabb_system(
 ) {
     if keys.just_pressed(KeyCode::F1) {
         if debug_state.enabled {
-            // 开启调试模式：为所有现有chunk创建调试AABB
             for chunk_entity in chunk_query.iter() {
-                // 检查是否已经有调试AABB子实体
                 let has_debug_aabb = if let Ok(children) = children_query.get(chunk_entity) {
                     children.iter().any(|child| {
                         debug_query.get(child).is_ok()
@@ -286,7 +274,6 @@ fn debug_aabb_system(
                 }
             }
         } else {
-            // 关闭调试模式：删除所有调试AABB
             for entity in debug_query.iter() {
                 commands.entity(entity).despawn();
             }
@@ -300,9 +287,8 @@ fn create_debug_aabb_for_chunk(
     materials: &mut ResMut<Assets<StandardMaterial>>,
     chunk_entity: Entity,
 ) {
-    // 创建固定大小的AABB线框（覆盖整个chunk）
     let chunk_size_world = CHUNK_VOXELS_SIZE as f32 * VOXEL_SIZE;
-    let chunk_height_world = CHUNK_VOXELS_HEIGHT as f32 * VOXEL_SIZE;
+    let chunk_height_world = chunk_world_height();
 
     let min = Vec3::new(0.0, 0.0, 0.0);
     let max = Vec3::new(chunk_size_world, chunk_height_world, chunk_size_world);
@@ -347,7 +333,7 @@ fn create_debug_aabb_for_chunk(
             DebugAabb,
             Mesh3d(mesh_handle),
             MeshMaterial3d(material_handle),
-            Transform::from_translation(Vec3::ZERO), // 相对于父chunk的位置
+            Transform::from_translation(Vec3::ZERO),
             GlobalTransform::default(),
             Name::new("Debug AABB"),
             NotShadowCaster,
@@ -355,7 +341,6 @@ fn create_debug_aabb_for_chunk(
         ))
         .id();
 
-    // 将调试AABB作为chunk的子实体
     commands.entity(chunk_entity).add_child(debug_aabb_entity);
 }
 
@@ -370,7 +355,6 @@ fn generate_chunk_mesh(chunk: &Chunk) -> Option<Mesh> {
             for z in 0..CHUNK_VOXELS_SIZE {
                 if let Some(voxel) = chunk.get_voxel(x, y, z) {
                     if voxel.is_solid() {
-                        // 使用统一的坐标计算，确保与world坐标系一致
                         let local_pos = Vec3::new(
                             x as f32 * VOXEL_SIZE,
                             y as f32 * VOXEL_SIZE,
@@ -398,15 +382,12 @@ fn generate_chunk_mesh(chunk: &Chunk) -> Option<Mesh> {
         return None;
     }
 
-    // 手动设置固定的包围盒，覆盖整个chunk区域
     let chunk_size_world = CHUNK_VOXELS_SIZE as f32 * VOXEL_SIZE;
-    let chunk_height_world = CHUNK_VOXELS_HEIGHT as f32 * VOXEL_SIZE;
+    let chunk_height_world = chunk_world_height();
 
-    // 添加四个角落的虚拟顶点来确保包围盒正确
     let mut extended_vertices = vertices;
     let dummy_indices_start = extended_vertices.len() as u32;
 
-    // 添加chunk四个角落的底部和顶部点
     extended_vertices.extend_from_slice(&[
         [0.0, 0.0, 0.0],
         [chunk_size_world, 0.0, 0.0],
@@ -418,13 +399,11 @@ fn generate_chunk_mesh(chunk: &Chunk) -> Option<Mesh> {
         [chunk_size_world, chunk_height_world, chunk_size_world],
     ]);
 
-    // 为虚拟顶点添加法线和UV
     let mut extended_normals = normals;
     let mut extended_uvs = uvs;
     extended_normals.extend_from_slice(&[[0.0, 1.0, 0.0]; 8]);
     extended_uvs.extend_from_slice(&[[0.0, 0.0]; 8]);
 
-    // 添加退化三角形（面积为0，不会被渲染）来包含虚拟顶点
     let mut extended_indices = indices;
     for i in 0..8 {
         let idx = dummy_indices_start + i;
@@ -502,7 +481,6 @@ fn should_render_face(
     let ny = y as i32 + dy;
     let nz = z as i32 + dz;
 
-    // If adjacent position is outside chunk bounds, render the face
     if nx < 0
         || nx >= CHUNK_VOXELS_SIZE as i32
         || ny < 0
@@ -513,7 +491,6 @@ fn should_render_face(
         return true;
     }
 
-    // If adjacent position is air or doesn't exist, render the face
     if let Some(neighbor_voxel) = chunk.get_voxel(nx as usize, ny as usize, nz as usize) {
         !neighbor_voxel.is_solid()
     } else {
@@ -552,7 +529,6 @@ fn force_rerender_system(
     rerender_query: Query<Entity, With<crate::player::NeedsRerender>>,
 ) {
     for entity in rerender_query.iter() {
-        // 移除重新渲染标记，让正常的渲染系统处理
         commands
             .entity(entity)
             .remove::<crate::player::NeedsRerender>();

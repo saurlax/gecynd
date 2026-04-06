@@ -84,12 +84,11 @@ fn spawn_player(mut commands: Commands) {
         ))
         .id();
 
-    // 将相机作为玩家的子组件
     let camera = commands
         .spawn((
             PlayerCamera,
             Camera3d::default(),
-            Transform::from_xyz(0.0, 1.6, 0.0), // 相对于玩家的位置
+            Transform::from_xyz(0.0, 1.6, 0.0),
             GlobalTransform::default(),
         ))
         .id();
@@ -106,7 +105,6 @@ fn player_movement(
         let mut movement = Vec3::ZERO;
         let mut speed = 8.0;
         
-        // Sprint when holding shift
         if keyboard_input.pressed(KeyCode::ShiftLeft) {
             speed *= 2.0;
         }
@@ -133,7 +131,6 @@ fn player_movement(
             movement.y -= 1.0;
         }
 
-        // 归一化水平移动向量
         let horizontal = Vec3::new(movement.x, 0.0, movement.z);
         let normalized_horizontal = if horizontal.length() > 0.0 {
             horizontal.normalize()
@@ -281,7 +278,7 @@ fn raycast_solid_voxel(
     max_distance: f32,
 ) -> Option<(Vec3, Vec3)> {
     let normalized_dir = direction.normalize();
-    let step_size = 0.01; // 更小的步长以获得更精确的交点
+    let step_size = 0.01;
     let max_steps = (max_distance / step_size) as i32;
 
     for i in 1..max_steps {
@@ -289,10 +286,8 @@ fn raycast_solid_voxel(
         
         if let Some(voxel) = world.get_voxel_at_world(current_pos, chunk_query) {
             if voxel.is_solid() {
-                // 找到第一个固体方块，现在需要精确计算射线与方块的交点
                 let voxel_center = world.get_voxel_center_at_world(current_pos).unwrap_or(current_pos);
-                
-                // 使用精确的射线-立方体相交算法
+
                 if let Some(hit_normal) = raycast_cube(start, normalized_dir, voxel_center, VOXEL_SIZE) {
                     return Some((voxel_center, hit_normal));
                 }
@@ -308,7 +303,6 @@ fn raycast_cube(ray_origin: Vec3, ray_dir: Vec3, cube_center: Vec3, cube_size: f
     let cube_min = cube_center - Vec3::splat(half_size);
     let cube_max = cube_center + Vec3::splat(half_size);
     
-    // 计算射线与立方体各面的交点参数t
     let inv_dir = Vec3::new(
         if ray_dir.x != 0.0 { 1.0 / ray_dir.x } else { f32::INFINITY },
         if ray_dir.y != 0.0 { 1.0 / ray_dir.y } else { f32::INFINITY },
@@ -324,12 +318,10 @@ fn raycast_cube(ray_origin: Vec3, ray_dir: Vec3, cube_center: Vec3, cube_size: f
     let t_near = t_min.x.max(t_min.y).max(t_min.z);
     let t_far = t_max.x.min(t_max.y).min(t_max.z);
     
-    // 检查是否有交点
     if t_near > t_far || t_far < 0.0 {
         return None;
     }
     
-    // 选择合适的t值（如果射线起点在立方体内部，使用t_far；否则使用t_near）
     let t = if t_near < 0.0 { t_far } else { t_near };
     
     if t < 0.0 {
@@ -338,30 +330,26 @@ fn raycast_cube(ray_origin: Vec3, ray_dir: Vec3, cube_center: Vec3, cube_size: f
     
     let hit_point = ray_origin + ray_dir * t;
     
-    // 确定击中的面
     let relative_pos = hit_point - cube_center;
     let abs_pos = relative_pos.abs();
     
     let normal = if abs_pos.x >= abs_pos.y && abs_pos.x >= abs_pos.z {
-        // X面
         if relative_pos.x > 0.0 {
-            Vec3::new(1.0, 0.0, 0.0)  // +X面
+            Vec3::new(1.0, 0.0, 0.0)
         } else {
-            Vec3::new(-1.0, 0.0, 0.0) // -X面
+            Vec3::new(-1.0, 0.0, 0.0)
         }
     } else if abs_pos.y >= abs_pos.z {
-        // Y面
         if relative_pos.y > 0.0 {
-            Vec3::new(0.0, 1.0, 0.0)  // +Y面
+            Vec3::new(0.0, 1.0, 0.0)
         } else {
-            Vec3::new(0.0, -1.0, 0.0) // -Y面
+            Vec3::new(0.0, -1.0, 0.0)
         }
     } else {
-        // Z面
         if relative_pos.z > 0.0 {
-            Vec3::new(0.0, 0.0, 1.0)  // +Z面
+            Vec3::new(0.0, 0.0, 1.0)
         } else {
-            Vec3::new(0.0, 0.0, -1.0) // -Z面
+            Vec3::new(0.0, 0.0, -1.0)
         }
     };
     
@@ -424,7 +412,6 @@ fn voxel_interaction(
 
     if let Some(selected_voxel_pos) = interaction.selected_voxel_world_pos {
         if mouse_input.just_pressed(MouseButton::Left) {
-            // Break block at selected position
             if world.set_voxel_at_world(selected_voxel_pos, Voxel::new(VoxelType::Air), &mut chunk_query_set.p1()) {
                 mark_chunk_for_update(&mut commands, &world, selected_voxel_pos);
             }
@@ -439,7 +426,6 @@ fn voxel_interaction(
                     if let Some(hit_face) = interaction.hit_face {
                         let place_pos = calculate_placement_position(selected_voxel_pos, hit_face);
                         
-                        // Check collision with player
                         if let Ok(player_transform) = player_query.single() {
                             let player_pos = player_transform.translation;
                             let player_min = player_pos + Vec3::new(-0.25, 0.0, -0.25);
@@ -456,7 +442,6 @@ fn voxel_interaction(
                             }
                         }
                         
-                        // Check if placement position is valid and place block
                         if let Some(existing_voxel) = world.get_voxel_at_world(place_pos, &chunk_query_set.p0()) {
                             if !existing_voxel.is_solid() {
                                 if world.set_voxel_at_world(place_pos, Voxel::new(VoxelType::Stone), &mut chunk_query_set.p1()) {
@@ -475,11 +460,9 @@ fn voxel_interaction(
 fn mark_chunk_for_update(commands: &mut Commands, world: &World, world_pos: Vec3) {
     if let Some((chunk_coord, _, _, _)) = world.world_to_voxel(world_pos) {
         if let Some(chunk_entity) = world.chunks.get(&chunk_coord) {
-            // 强制重新生成网格，确保立即可见
             commands.entity(*chunk_entity).remove::<crate::render::ChunkMesh>();
             commands.entity(*chunk_entity).remove::<crate::physics::ChunkPhysics>();
-            
-            // 添加一个标记确保在下一帧重新渲染
+
             commands.entity(*chunk_entity).insert(NeedsRerender);
         }
     }

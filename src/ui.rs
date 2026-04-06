@@ -17,7 +17,6 @@ struct PlayerInfoText;
 struct SelectedBlockText;
 
 fn setup_ui(mut commands: Commands) {
-    // 创建UI根节点
     commands
         .spawn((
             Node {
@@ -30,7 +29,6 @@ fn setup_ui(mut commands: Commands) {
             BackgroundColor(Color::NONE),
         ))
         .with_children(|parent| {
-            // 玩家位置信息
             parent.spawn((
                 Text::new("Position: (0.0, 0.0, 0.0)"),
                 TextFont {
@@ -40,8 +38,7 @@ fn setup_ui(mut commands: Commands) {
                 TextColor(Color::WHITE),
                 PlayerInfoText,
             ));
-            
-            // 选中方块信息
+
             parent.spawn((
                 Text::new("Selected: None"),
                 TextFont {
@@ -55,8 +52,7 @@ fn setup_ui(mut commands: Commands) {
                     ..default()
                 },
             ));
-            
-            // 控制说明
+
             parent
                 .spawn((
                     Node {
@@ -96,7 +92,6 @@ fn update_ui_text(
     mut player_info_query: Query<&mut Text, (With<PlayerInfoText>, Without<SelectedBlockText>)>,
     mut selected_block_query: Query<&mut Text, (With<SelectedBlockText>, Without<PlayerInfoText>)>,
 ) {
-    // 更新玩家位置
     if let Ok(player_transform) = player_query.single() {
         if let Ok(mut text) = player_info_query.single_mut() {
             let pos = player_transform.translation;
@@ -106,8 +101,7 @@ fn update_ui_text(
             );
         }
     }
-    
-    // 更新选中方块信息
+
     if let Ok(mut text) = selected_block_query.single_mut() {
         if let Some(selected_pos) = interaction.selected_voxel_world_pos {
             if let Some((chunk_coord, x, y, z)) = world.world_to_voxel(selected_pos) {

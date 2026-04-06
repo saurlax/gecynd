@@ -9,7 +9,6 @@ impl Plugin for PhysicsPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((
             RapierPhysicsPlugin::<NoUserData>::default(),
-            // RapierDebugRenderPlugin::default(),
         ))
         .add_systems(Update, update_chunk_physics);
     }
@@ -24,7 +23,6 @@ fn update_chunk_physics(
     chunk_query: Query<(Entity, &Chunk), Without<ChunkPhysics>>,
     chunk_requery: Query<(Entity, &Chunk), (With<RigidBody>, Without<ChunkPhysics>)>,
 ) {
-    // 处理新区块
     for (entity, chunk) in chunk_query.iter() {
         let collider = generate_chunk_collider(chunk);
         if let Some(collider) = collider {
@@ -33,8 +31,7 @@ fn update_chunk_physics(
                 .insert((ChunkPhysics, RigidBody::Fixed, collider));
         }
     }
-    
-    // 处理需要重新生成物理的区块
+
     for (entity, chunk) in chunk_requery.iter() {
         commands.entity(entity).remove::<RigidBody>();
         commands.entity(entity).remove::<Collider>();
@@ -57,7 +54,6 @@ fn generate_chunk_collider(chunk: &Chunk) -> Option<Collider> {
             for z in 0..CHUNK_VOXELS_SIZE {
                 if let Some(voxel) = chunk.get_voxel(x, y, z) {
                     if voxel.is_solid() {
-                        // 使用与渲染系统相同的坐标计算方式
                         let local_x = x as f32 * VOXEL_SIZE;
                         let local_y = y as f32 * VOXEL_SIZE;
                         let local_z = z as f32 * VOXEL_SIZE;
@@ -122,7 +118,6 @@ fn should_render_face_physics(
     let ny = y as i32 + dy;
     let nz = z as i32 + dz;
 
-    // 如果相邻位置超出区块边界，则渲染该面
     if nx < 0
         || nx >= CHUNK_VOXELS_SIZE as i32
         || ny < 0
@@ -133,7 +128,6 @@ fn should_render_face_physics(
         return true;
     }
 
-    // 如果相邻位置是空气或不存在，则渲染该面
     if let Some(neighbor_voxel) = chunk.get_voxel(nx as usize, ny as usize, nz as usize) {
         !neighbor_voxel.is_solid()
     } else {
@@ -151,7 +145,6 @@ fn add_face_geometry(
     let start_vertex = vertices.len() as u32;
     let face_vertices = face.get_vertices(pos, size);
     
-    // Convert to Vec3
     for vertex in face_vertices.iter() {
         vertices.push(Vec3::new(vertex[0], vertex[1], vertex[2]));
     }

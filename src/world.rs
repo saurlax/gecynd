@@ -2,16 +2,32 @@ use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use std::collections::HashSet;
 
-use crate::voxel::{Voxel, VOXEL_PRECISION, VOXEL_SIZE};
+use crate::voxel::{Voxel, VOXEL_SIZE};
 use crate::terrain::TerrainGenerator;
 use crate::player::Player;
 
-pub const CHUNK_SIZE: usize = 16;
+pub const CHUNK_SIZE: usize = 32;
 pub const CHUNK_HEIGHT: usize = 256;
 pub const RENDER_DISTANCE: i32 = 5;
 
-pub const CHUNK_VOXELS_SIZE: usize = CHUNK_SIZE * VOXEL_PRECISION as usize;
-pub const CHUNK_VOXELS_HEIGHT: usize = CHUNK_HEIGHT * VOXEL_PRECISION as usize;
+pub const CHUNK_VOXELS_SIZE: usize = CHUNK_SIZE;
+pub const CHUNK_VOXELS_HEIGHT: usize = CHUNK_HEIGHT;
+
+pub fn chunk_world_size() -> f32 {
+    CHUNK_VOXELS_SIZE as f32 * VOXEL_SIZE
+}
+
+pub fn chunk_world_height() -> f32 {
+    CHUNK_VOXELS_HEIGHT as f32 * VOXEL_SIZE
+}
+
+pub fn chunk_world_origin(coord: ChunkCoord) -> Vec3 {
+    Vec3::new(
+        coord.x as f32 * chunk_world_size(),
+        0.0,
+        coord.z as f32 * chunk_world_size(),
+    )
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ChunkCoord {
@@ -25,8 +41,7 @@ impl ChunkCoord {
     }
     
     pub fn from_world_pos(world_pos: Vec3) -> Self {
-        // 使用VOXEL_SIZE统一坐标计算
-        let chunk_size_world = CHUNK_SIZE as f32 * VOXEL_SIZE;
+        let chunk_size_world = chunk_world_size();
         Self {
             x: (world_pos.x / chunk_size_world).floor() as i32,
             z: (world_pos.z / chunk_size_world).floor() as i32,
@@ -90,8 +105,7 @@ impl Default for World {
 }
 
 impl World {
-    /// Convert world coordinates to chunk coordinate and voxel indices
-    /// 确保使用VOXEL_SIZE进行所有坐标转换
+    /// Converts world coordinates to chunk coordinates and voxel indices.
     pub fn world_to_voxel(&self, world_pos: Vec3) -> Option<(ChunkCoord, usize, usize, usize)> {
         let chunk_coord = ChunkCoord::from_world_pos(world_pos);
         
@@ -99,13 +113,11 @@ impl World {
             return None;
         }
         
-        // 使用统一的坐标计算
-        let chunk_world_x = chunk_coord.x as f32 * (CHUNK_SIZE as f32 * VOXEL_SIZE);
-        let chunk_world_z = chunk_coord.z as f32 * (CHUNK_SIZE as f32 * VOXEL_SIZE);
+        let chunk_origin = chunk_world_origin(chunk_coord);
         
-        let local_x = world_pos.x - chunk_world_x;
+        let local_x = world_pos.x - chunk_origin.x;
         let local_y = world_pos.y;
-        let local_z = world_pos.z - chunk_world_z;
+        let local_z = world_pos.z - chunk_origin.z;
         
         if local_x < 0.0 || local_y < 0.0 || local_z < 0.0 {
             return None;
@@ -124,7 +136,7 @@ impl World {
         }
     }
     
-    /// Get voxel at world position
+    /// Returns the voxel at a world position.
     pub fn get_voxel_at_world(&self, world_pos: Vec3, chunk_query: &Query<&Chunk>) -> Option<Voxel> {
         if let Some((chunk_coord, x, y, z)) = self.world_to_voxel(world_pos) {
             if let Some(chunk_entity) = self.chunks.get(&chunk_coord) {
@@ -136,7 +148,7 @@ impl World {
         None
     }
     
-    /// Set voxel at world position
+    /// Sets the voxel at a world position.
     pub fn set_voxel_at_world(
         &self, 
         world_pos: Vec3, 
@@ -154,18 +166,16 @@ impl World {
         false
     }
     
-    /// Get the world position (center) of a voxel at given world coordinates
-    /// 使用统一的VOXEL_SIZE坐标计算
+    /// Returns the world-space center of the voxel at a world position.
     pub fn get_voxel_center_at_world(&self, world_pos: Vec3) -> Option<Vec3> {
         if let Some((chunk_coord, x, y, z)) = self.world_to_voxel(world_pos) {
             if let Some(_chunk_entity) = self.chunks.get(&chunk_coord) {
-                let chunk_world_x = chunk_coord.x as f32 * (CHUNK_SIZE as f32 * VOXEL_SIZE);
-                let chunk_world_z = chunk_coord.z as f32 * (CHUNK_SIZE as f32 * VOXEL_SIZE);
+                let chunk_origin = chunk_world_origin(chunk_coord);
                 
                 return Some(Vec3::new(
-                    chunk_world_x + x as f32 * VOXEL_SIZE + VOXEL_SIZE / 2.0,
+                    chunk_origin.x + x as f32 * VOXEL_SIZE + VOXEL_SIZE / 2.0,
                     y as f32 * VOXEL_SIZE + VOXEL_SIZE / 2.0,
-                    chunk_world_z + z as f32 * VOXEL_SIZE + VOXEL_SIZE / 2.0,
+                    chunk_origin.z + z as f32 * VOXEL_SIZE + VOXEL_SIZE / 2.0,
                 ));
             }
         }

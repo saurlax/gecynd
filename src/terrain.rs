@@ -1,5 +1,5 @@
 use noise::{NoiseFn, Perlin};
-use crate::world::{Chunk, CHUNK_SIZE, CHUNK_VOXELS_SIZE, CHUNK_VOXELS_HEIGHT};
+use crate::world::{chunk_world_origin, Chunk, CHUNK_VOXELS_SIZE, CHUNK_VOXELS_HEIGHT};
 use crate::voxel::{Voxel, VoxelType, VOXEL_SIZE};
 
 pub struct TerrainGenerator {
@@ -16,14 +16,12 @@ impl TerrainGenerator {
     }
     
     pub fn generate_chunk(&self, chunk: &mut Chunk) {
-        // 使用统一的VOXEL_SIZE坐标计算
-        let chunk_world_x = chunk.coord.x as f32 * (CHUNK_SIZE as f32 * VOXEL_SIZE);
-        let chunk_world_z = chunk.coord.z as f32 * (CHUNK_SIZE as f32 * VOXEL_SIZE);
+        let chunk_origin = chunk_world_origin(chunk.coord);
         
         for x in 0..CHUNK_VOXELS_SIZE {
             for z in 0..CHUNK_VOXELS_SIZE {
-                let world_x = chunk_world_x + x as f32 * VOXEL_SIZE;
-                let world_z = chunk_world_z + z as f32 * VOXEL_SIZE;
+                let world_x = chunk_origin.x + x as f32 * VOXEL_SIZE;
+                let world_z = chunk_origin.z + z as f32 * VOXEL_SIZE;
                 
                 let height = self.get_height(world_x as f64, world_z as f64);
                 let grass_height = height;
@@ -62,7 +60,6 @@ impl TerrainGenerator {
     fn get_height(&self, x: f64, z: f64) -> f64 {
         let scale = 0.01;
         let height = self.height_noise.get([x * scale, z * scale]);
-        // 将噪声值从[-1, 1]映射到[32, 96]
         32.0 + (height + 1.0) * 32.0
     }
 }
