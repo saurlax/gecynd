@@ -1,15 +1,31 @@
 use crate::voxel::{VOXEL_SIZE, Voxel, VoxelType, VoxelFace};
-use crate::world::World;
+use crate::world::{chunk_world_origin, Chunk, World, CHUNK_VOXELS_HEIGHT, CHUNK_VOXELS_SIZE};
 use bevy::input::mouse::MouseMotion;
 use bevy::prelude::*;
+use bevy::time::Fixed;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow, WindowFocused};
 use bevy_rapier3d::prelude::*;
+
+const PLAYER_WALK_SPEED: f32 = 4.5;
+const PLAYER_SPRINT_MULTIPLIER: f32 = 1.8;
+const PLAYER_GRAVITY: f32 = 25.0;
+const PLAYER_MAX_FALL_SPEED: f32 = 40.0;
+const PLAYER_JUMP_SPEED: f32 = 6.5;
+const PLAYER_STEP_HEIGHT: f32 = 0.5;
 
 #[derive(Component)]
 pub struct Player;
 
 #[derive(Component)]
 pub struct PlayerCamera;
+
+#[derive(Component)]
+pub struct NeedsTerrainPlacement;
+
+#[derive(Component, Default)]
+pub struct PlayerMotor {
+    pub vertical_velocity: f32,
+}
 
 #[derive(Resource)]
 pub struct PlayerInteraction {
@@ -60,12 +76,13 @@ impl Plugin for PlayerPlugin {
             .add_systems(
                 Update,
                 (
-                    player_movement,
+                    align_player_to_terrain,
                     player_look,
                     voxel_interaction,
                     voxel_selection,
                 ),
             );
+        app.add_systems(FixedUpdate, player_movement);
     }
 }
 
@@ -73,13 +90,22 @@ fn spawn_player(mut commands: Commands) {
     let player = commands
         .spawn((
             Player,
+            PlayerMotor::default(),
+            NeedsTerrainPlacement,
             RigidBody::KinematicPositionBased,
             Collider::cuboid(0.25, 1.0, 0.25),
             KinematicCharacterController {
                 translation: Some(Vec3::ZERO),
+                autostep: Some(CharacterAutostep {
+                    max_height: CharacterLength::Absolute(PLAYER_STEP_HEIGHT),
+                    min_width: CharacterLength::Absolute(0.2),
+                    include_dynamic_bodies: false,
+                }),
+                snap_to_ground: Some(CharacterLength::Absolute(0.1)),
                 ..default()
             },
-            Transform::from_xyz(8.0, 80.0, 8.0),
+            // Spawn at a safe provisional height, then snap to terrain once chunks load.
+            Transform::from_xyz(8.0, 24.0, 8.0),
             GlobalTransform::default(),
         ))
         .id();
@@ -98,15 +124,20 @@ fn spawn_player(mut commands: Commands) {
 
 fn player_movement(
     keyboard_input: Res<ButtonInput<KeyCode>>,
-    mut player_query: Query<(&mut KinematicCharacterController, &Transform), With<Player>>,
-    time: Res<Time>,
+    mut player_query: Query<(
+        &mut KinematicCharacterController,
+        &Transform,
+        Option<&KinematicCharacterControllerOutput>,
+        &mut PlayerMotor,
+    ), With<Player>>,
+    time: Res<Time<Fixed>>,
 ) {
-    if let Ok((mut controller, transform)) = player_query.single_mut() {
+    if let Ok((mut controller, transform, controller_output, mut motor)) = player_query.single_mut() {
         let mut movement = Vec3::ZERO;
-        let mut speed = 8.0;
+        let mut speed = PLAYER_WALK_SPEED;
         
         if keyboard_input.pressed(KeyCode::ShiftLeft) {
-            speed *= 2.0;
+            speed *= PLAYER_SPRINT_MULTIPLIER;
         }
 
         let forward = -*transform.local_z();
@@ -124,11 +155,19 @@ fn player_movement(
         if keyboard_input.pressed(KeyCode::KeyD) {
             movement += right;
         }
-        if keyboard_input.pressed(KeyCode::Space) {
-            movement.y += 1.0;
+
+        let grounded = controller_output.is_some_and(|output| output.grounded);
+        if grounded && motor.vertical_velocity < 0.0 {
+            motor.vertical_velocity = 0.0;
         }
-        if keyboard_input.pressed(KeyCode::ControlLeft) {
-            movement.y -= 1.0;
+
+        if keyboard_input.just_pressed(KeyCode::Space) && grounded {
+            motor.vertical_velocity = PLAYER_JUMP_SPEED;
+        } else {
+            motor.vertical_velocity -= PLAYER_GRAVITY * time.delta_secs();
+            motor.vertical_velocity = motor
+                .vertical_velocity
+                .clamp(-PLAYER_MAX_FALL_SPEED, PLAYER_JUMP_SPEED);
         }
 
         let horizontal = Vec3::new(movement.x, 0.0, movement.z);
@@ -140,11 +179,55 @@ fn player_movement(
 
         let final_movement = Vec3::new(
             normalized_horizontal.x * speed,
-            movement.y * speed,
+            motor.vertical_velocity,
             normalized_horizontal.z * speed,
         ) * time.delta_secs();
 
         controller.translation = Some(final_movement);
+    }
+}
+
+fn align_player_to_terrain(
+    mut commands: Commands,
+    mut player_query: Query<(Entity, &mut Transform), (With<Player>, With<NeedsTerrainPlacement>)>,
+    world: Res<World>,
+    chunk_query: Query<&Chunk>,
+) {
+    for (entity, mut transform) in player_query.iter_mut() {
+        let chunk_coord = crate::world::ChunkCoord::from_world_pos(transform.translation);
+        let Some(chunk_entity) = world.chunks.get(&chunk_coord) else {
+            continue;
+        };
+
+        let Ok(chunk) = chunk_query.get(*chunk_entity) else {
+            continue;
+        };
+
+        let chunk_origin = chunk_world_origin(chunk_coord);
+        let local_x = ((transform.translation.x - chunk_origin.x) / VOXEL_SIZE).floor() as i32;
+        let local_z = ((transform.translation.z - chunk_origin.z) / VOXEL_SIZE).floor() as i32;
+
+        if local_x < 0
+            || local_x >= CHUNK_VOXELS_SIZE as i32
+            || local_z < 0
+            || local_z >= CHUNK_VOXELS_SIZE as i32
+        {
+            continue;
+        }
+
+        let x = local_x as usize;
+        let z = local_z as usize;
+
+        let top_solid_y = (0..CHUNK_VOXELS_HEIGHT)
+            .rev()
+            .find(|&y| chunk.get_voxel(x, y, z).is_some_and(|voxel| voxel.is_solid()));
+
+        if let Some(surface_y) = top_solid_y {
+            let surface_top_world = (surface_y as f32 + 1.0) * VOXEL_SIZE;
+            // Player collider half-height is 1.0m.
+            transform.translation.y = surface_top_world + 1.05;
+            commands.entity(entity).remove::<NeedsTerrainPlacement>();
+        }
     }
 }
 
@@ -278,7 +361,7 @@ fn raycast_solid_voxel(
     max_distance: f32,
 ) -> Option<(Vec3, Vec3)> {
     let normalized_dir = direction.normalize();
-    let step_size = 0.01;
+    let step_size = (VOXEL_SIZE * 0.5).max(0.01);
     let max_steps = (max_distance / step_size) as i32;
 
     for i in 1..max_steps {

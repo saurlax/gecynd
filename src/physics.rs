@@ -3,19 +3,38 @@ use crate::world::{CHUNK_VOXELS_HEIGHT, CHUNK_VOXELS_SIZE, Chunk, World};
 use bevy::prelude::*;
 use bevy_rapier3d::prelude::*;
 
+#[derive(Resource, Default)]
+pub struct PhysicsDebugState {
+    pub enabled: bool,
+}
+
 pub struct PhysicsPlugin;
 
 impl Plugin for PhysicsPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((
             RapierPhysicsPlugin::<NoUserData>::default(),
+            RapierDebugRenderPlugin::default().disabled(),
         ))
+        .init_resource::<PhysicsDebugState>()
+        .add_systems(Update, toggle_physics_debug)
         .add_systems(Update, update_chunk_physics);
     }
 }
 
 #[derive(Component)]
 pub struct ChunkPhysics;
+
+fn toggle_physics_debug(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut debug_state: ResMut<PhysicsDebugState>,
+    mut render_context: ResMut<DebugRenderContext>,
+) {
+    if keys.just_pressed(KeyCode::F2) {
+        debug_state.enabled = !debug_state.enabled;
+        render_context.enabled = debug_state.enabled;
+    }
+}
 
 fn update_chunk_physics(
     mut commands: Commands,

@@ -8,7 +8,7 @@ use crate::player::Player;
 
 pub const CHUNK_SIZE: usize = 32;
 pub const CHUNK_HEIGHT: usize = 256;
-pub const RENDER_DISTANCE: i32 = 5;
+pub const VISIBLE_RADIUS_METERS: f32 = 16.0;
 
 pub const CHUNK_VOXELS_SIZE: usize = CHUNK_SIZE;
 pub const CHUNK_VOXELS_HEIGHT: usize = CHUNK_HEIGHT;
@@ -27,6 +27,10 @@ pub fn chunk_world_origin(coord: ChunkCoord) -> Vec3 {
         0.0,
         coord.z as f32 * chunk_world_size(),
     )
+}
+
+pub fn render_distance_chunks() -> i32 {
+    ((VISIBLE_RADIUS_METERS / chunk_world_size()).ceil() as i32).max(1)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -212,10 +216,17 @@ fn chunk_loading_system(
 ) {
     if let Ok(player_transform) = player_query.single() {
         let player_chunk = ChunkCoord::from_world_pos(player_transform.translation);
+        let render_distance = render_distance_chunks();
         let mut chunks_to_generate = HashSet::new();
         
-        for x in (player_chunk.x - RENDER_DISTANCE)..=(player_chunk.x + RENDER_DISTANCE) {
-            for z in (player_chunk.z - RENDER_DISTANCE)..=(player_chunk.z + RENDER_DISTANCE) {
+        for x in (player_chunk.x - render_distance)..=(player_chunk.x + render_distance) {
+            for z in (player_chunk.z - render_distance)..=(player_chunk.z + render_distance) {
+                let dx = x - player_chunk.x;
+                let dz = z - player_chunk.z;
+                if dx * dx + dz * dz > render_distance * render_distance {
+                    continue;
+                }
+
                 let coord = ChunkCoord::new(x, z);
                 if !world.chunks.contains_key(&coord) {
                     chunks_to_generate.insert(coord);
@@ -240,7 +251,7 @@ fn chunk_unloading_system(
 ) {
     if let Ok(player_transform) = player_query.single() {
         let player_chunk = ChunkCoord::from_world_pos(player_transform.translation);
-        let unload_distance = RENDER_DISTANCE + 2;
+        let unload_distance = render_distance_chunks() + 2;
         
         let mut chunks_to_unload = Vec::new();
         
@@ -248,7 +259,7 @@ fn chunk_unloading_system(
             let distance_x = (chunk_coord.x - player_chunk.x).abs();
             let distance_z = (chunk_coord.z - player_chunk.z).abs();
             
-            if distance_x > unload_distance || distance_z > unload_distance {
+            if distance_x * distance_x + distance_z * distance_z > unload_distance * unload_distance {
                 chunks_to_unload.push((chunk_coord, chunk_entity));
             }
         }

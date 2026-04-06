@@ -21,9 +21,14 @@ pub struct DebugAabb;
 
 pub struct RenderPlugin;
 
+#[derive(Resource)]
+struct ChunkMaterial {
+    handle: Handle<StandardMaterial>,
+}
+
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, (setup_lighting, setup_crosshair))
+        app.add_systems(Startup, (setup_lighting, setup_chunk_material, setup_crosshair))
             .add_systems(
                 Update,
                 (
@@ -40,8 +45,9 @@ impl Plugin for RenderPlugin {
 fn setup_lighting(mut commands: Commands) {
     commands.spawn((
         DirectionalLight {
-            illuminance: 10000.0,
-            shadows_enabled: true,
+            illuminance: 9000.0,
+            color: Color::srgb(1.0, 0.97, 0.9),
+            shadows_enabled: false,
             ..default()
         },
         Transform::from_rotation(Quat::from_euler(
@@ -53,10 +59,25 @@ fn setup_lighting(mut commands: Commands) {
     ));
 
     commands.insert_resource(GlobalAmbientLight {
-        color: Color::WHITE,
-        brightness: 60.0,
+        color: Color::srgb(0.62, 0.69, 0.8),
+        brightness: 100.0,
         affects_lightmapped_meshes: false,
     });
+}
+
+fn setup_chunk_material(
+    mut commands: Commands,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let material = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.5, 0.8, 0.3),
+        metallic: 0.0,
+        perceptual_roughness: 0.9,
+        reflectance: 0.08,
+        ..default()
+    });
+
+    commands.insert_resource(ChunkMaterial { handle: material });
 }
 
 fn setup_crosshair(mut commands: Commands) {
@@ -109,28 +130,20 @@ fn chunk_rendering_system(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    chunk_material: Res<ChunkMaterial>,
     chunk_query: Query<(Entity, &Chunk), (Without<Mesh3d>, Without<ChunkMesh>)>,
     debug_state: Res<crate::world::DebugAabbState>,
 ) {
     for (entity, chunk) in chunk_query.iter() {
         if let Some(mesh) = generate_chunk_mesh(chunk) {
             let mesh_handle = meshes.add(mesh);
-            let material_handle = materials.add(StandardMaterial {
-                base_color: Color::srgb(0.5, 0.8, 0.3),
-                metallic: 0.0,
-                perceptual_roughness: 0.8,
-                reflectance: 0.1,
-                cull_mode: None,
-                double_sided: true,
-                ..default()
-            });
 
             let chunk_world_pos = chunk_world_origin(chunk.coord);
 
             commands.entity(entity).insert((
                 ChunkMesh,
                 Mesh3d(mesh_handle),
-                MeshMaterial3d(material_handle),
+                MeshMaterial3d(chunk_material.handle.clone()),
                 Transform::from_translation(chunk_world_pos),
                 GlobalTransform::default(),
                 Visibility::Visible,
@@ -146,7 +159,7 @@ fn chunk_rendering_system(
 fn chunk_rerendering_system(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    chunk_material: Res<ChunkMaterial>,
     chunk_query: Query<(Entity, &Chunk), (With<Mesh3d>, Without<ChunkMesh>)>,
 ) {
     for (entity, chunk) in chunk_query.iter() {
@@ -157,20 +170,11 @@ fn chunk_rerendering_system(
 
         if let Some(mesh) = generate_chunk_mesh(chunk) {
             let mesh_handle = meshes.add(mesh);
-            let material_handle = materials.add(StandardMaterial {
-                base_color: Color::srgb(0.5, 0.8, 0.3),
-                metallic: 0.0,
-                perceptual_roughness: 0.8,
-                reflectance: 0.1,
-                cull_mode: None,
-                double_sided: true,
-                ..default()
-            });
 
             commands.entity(entity).insert((
                 ChunkMesh,
                 Mesh3d(mesh_handle),
-                MeshMaterial3d(material_handle),
+                MeshMaterial3d(chunk_material.handle.clone()),
                 Visibility::Visible,
             ));
         }
