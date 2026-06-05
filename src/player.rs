@@ -1,5 +1,6 @@
 use crate::voxel::{VOXEL_SIZE, Voxel, VoxelType, VoxelFace};
 use crate::world::{initial_player_spawn_position, InitialWorldGeneration, World};
+use bevy::platform::collections::HashSet;
 use bevy::input::mouse::MouseMotion;
 use bevy::prelude::*;
 use bevy::time::Fixed;
@@ -499,16 +500,33 @@ fn voxel_interaction(
 }
 
 fn mark_chunk_for_update(commands: &mut Commands, world: &World, world_pos: Vec3) {
-    if let Some((chunk_coord, _, _, _)) = world.world_to_voxel(world_pos) {
-        if let Some(chunk_entity) = world.chunks.get(&chunk_coord) {
-            commands
-                .entity(*chunk_entity)
-                .remove::<crate::render::ChunkMesh>()
-                .remove::<Mesh3d>()
-                .remove::<MeshMaterial3d<StandardMaterial>>()
-                .remove::<crate::physics::ChunkPhysics>()
-                .remove::<Collider>()
-                .insert(NeedsRerender);
+    if let Some((chunk_coord, voxel_x, _, voxel_z)) = world.world_to_voxel(world_pos) {
+        let mut dirty_chunks = HashSet::from([chunk_coord]);
+
+        if voxel_x == 0 {
+            dirty_chunks.insert(crate::world::ChunkCoord::new(chunk_coord.x - 1, chunk_coord.z));
+        }
+        if voxel_x + 1 == crate::world::CHUNK_VOXELS_SIZE {
+            dirty_chunks.insert(crate::world::ChunkCoord::new(chunk_coord.x + 1, chunk_coord.z));
+        }
+        if voxel_z == 0 {
+            dirty_chunks.insert(crate::world::ChunkCoord::new(chunk_coord.x, chunk_coord.z - 1));
+        }
+        if voxel_z + 1 == crate::world::CHUNK_VOXELS_SIZE {
+            dirty_chunks.insert(crate::world::ChunkCoord::new(chunk_coord.x, chunk_coord.z + 1));
+        }
+
+        for dirty_chunk in dirty_chunks {
+            if let Some(chunk_entity) = world.chunks.get(&dirty_chunk) {
+                commands
+                    .entity(*chunk_entity)
+                    .remove::<crate::render::ChunkMesh>()
+                    .remove::<Mesh3d>()
+                    .remove::<MeshMaterial3d<StandardMaterial>>()
+                    .remove::<crate::physics::ChunkPhysics>()
+                    .remove::<Collider>()
+                    .insert(NeedsRerender);
+            }
         }
     }
 }
