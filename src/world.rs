@@ -192,21 +192,6 @@ impl World {
         false
     }
     
-    /// Returns the world-space center of the voxel at a world position.
-    pub fn get_voxel_center_at_world(&self, world_pos: Vec3) -> Option<Vec3> {
-        if let Some((chunk_coord, x, y, z)) = self.world_to_voxel(world_pos) {
-            if let Some(_chunk_entity) = self.chunks.get(&chunk_coord) {
-                let chunk_origin = chunk_world_origin(chunk_coord);
-                
-                return Some(Vec3::new(
-                    chunk_origin.x + x as f32 * VOXEL_SIZE + VOXEL_SIZE / 2.0,
-                    y as f32 * VOXEL_SIZE + VOXEL_SIZE / 2.0,
-                    chunk_origin.z + z as f32 * VOXEL_SIZE + VOXEL_SIZE / 2.0,
-                ));
-            }
-        }
-        None
-    }
 }
 
 #[derive(Resource)]
