@@ -318,83 +318,83 @@ fn raycast_solid_voxel(
     direction: Vec3,
     max_distance: f32,
 ) -> Option<(Vec3, Vec3)> {
-    let normalized_dir = direction.normalize();
-    let step_size = (VOXEL_SIZE * 0.5).max(0.01);
-    let max_steps = (max_distance / step_size) as i32;
+    let ray_dir = direction.normalize_or_zero();
+    if ray_dir == Vec3::ZERO {
+        return None;
+    }
 
-    for i in 1..max_steps {
-        let current_pos = start + normalized_dir * (i as f32 * step_size);
-        
-        if let Some(voxel) = world.get_voxel_at_world(current_pos, chunk_query) {
+    let mut voxel_x = (start.x / VOXEL_SIZE).floor() as i32;
+    let mut voxel_y = (start.y / VOXEL_SIZE).floor() as i32;
+    let mut voxel_z = (start.z / VOXEL_SIZE).floor() as i32;
+
+    let step_x = ray_dir.x.signum() as i32;
+    let step_y = ray_dir.y.signum() as i32;
+    let step_z = ray_dir.z.signum() as i32;
+
+    let delta_x = axis_delta_distance(ray_dir.x);
+    let delta_y = axis_delta_distance(ray_dir.y);
+    let delta_z = axis_delta_distance(ray_dir.z);
+
+    let mut t_max_x = initial_axis_distance(start.x, ray_dir.x, voxel_x);
+    let mut t_max_y = initial_axis_distance(start.y, ray_dir.y, voxel_y);
+    let mut t_max_z = initial_axis_distance(start.z, ray_dir.z, voxel_z);
+
+    let mut last_hit_normal = None;
+    let mut distance_traveled = 0.0;
+
+    while distance_traveled <= max_distance {
+        let sample_pos = voxel_center_from_indices(voxel_x, voxel_y, voxel_z);
+        if let Some(voxel) = world.get_voxel_at_world(sample_pos, chunk_query) {
             if voxel.is_solid() {
-                let voxel_center = world.get_voxel_center_at_world(current_pos).unwrap_or(current_pos);
-
-                if let Some(hit_normal) = raycast_cube(start, normalized_dir, voxel_center, VOXEL_SIZE) {
-                    return Some((voxel_center, hit_normal));
-                }
+                return Some((sample_pos, last_hit_normal.unwrap_or(-ray_dir.signum())));
             }
+        }
+
+        if t_max_x <= t_max_y && t_max_x <= t_max_z {
+            voxel_x += step_x;
+            distance_traveled = t_max_x;
+            t_max_x += delta_x;
+            last_hit_normal = Some(Vec3::new(-(step_x as f32), 0.0, 0.0));
+        } else if t_max_y <= t_max_z {
+            voxel_y += step_y;
+            distance_traveled = t_max_y;
+            t_max_y += delta_y;
+            last_hit_normal = Some(Vec3::new(0.0, -(step_y as f32), 0.0));
+        } else {
+            voxel_z += step_z;
+            distance_traveled = t_max_z;
+            t_max_z += delta_z;
+            last_hit_normal = Some(Vec3::new(0.0, 0.0, -(step_z as f32)));
         }
     }
 
     None
 }
 
-fn raycast_cube(ray_origin: Vec3, ray_dir: Vec3, cube_center: Vec3, cube_size: f32) -> Option<Vec3> {
-    let half_size = cube_size / 2.0;
-    let cube_min = cube_center - Vec3::splat(half_size);
-    let cube_max = cube_center + Vec3::splat(half_size);
-    
-    let inv_dir = Vec3::new(
-        if ray_dir.x != 0.0 { 1.0 / ray_dir.x } else { f32::INFINITY },
-        if ray_dir.y != 0.0 { 1.0 / ray_dir.y } else { f32::INFINITY },
-        if ray_dir.z != 0.0 { 1.0 / ray_dir.z } else { f32::INFINITY },
-    );
-    
-    let t1 = (cube_min - ray_origin) * inv_dir;
-    let t2 = (cube_max - ray_origin) * inv_dir;
-    
-    let t_min = t1.min(t2);
-    let t_max = t1.max(t2);
-    
-    let t_near = t_min.x.max(t_min.y).max(t_min.z);
-    let t_far = t_max.x.min(t_max.y).min(t_max.z);
-    
-    if t_near > t_far || t_far < 0.0 {
-        return None;
-    }
-    
-    let t = if t_near < 0.0 { t_far } else { t_near };
-    
-    if t < 0.0 {
-        return None;
-    }
-    
-    let hit_point = ray_origin + ray_dir * t;
-    
-    let relative_pos = hit_point - cube_center;
-    let abs_pos = relative_pos.abs();
-    
-    let normal = if abs_pos.x >= abs_pos.y && abs_pos.x >= abs_pos.z {
-        if relative_pos.x > 0.0 {
-            Vec3::new(1.0, 0.0, 0.0)
-        } else {
-            Vec3::new(-1.0, 0.0, 0.0)
-        }
-    } else if abs_pos.y >= abs_pos.z {
-        if relative_pos.y > 0.0 {
-            Vec3::new(0.0, 1.0, 0.0)
-        } else {
-            Vec3::new(0.0, -1.0, 0.0)
-        }
+fn axis_delta_distance(direction: f32) -> f32 {
+    if direction == 0.0 {
+        f32::INFINITY
     } else {
-        if relative_pos.z > 0.0 {
-            Vec3::new(0.0, 0.0, 1.0)
-        } else {
-            Vec3::new(0.0, 0.0, -1.0)
-        }
-    };
-    
-    Some(normal)
+        VOXEL_SIZE / direction.abs()
+    }
+}
+
+fn initial_axis_distance(origin: f32, direction: f32, voxel_index: i32) -> f32 {
+    if direction > 0.0 {
+        (((voxel_index + 1) as f32 * VOXEL_SIZE) - origin) / direction
+    } else if direction < 0.0 {
+        (origin - (voxel_index as f32 * VOXEL_SIZE)) / -direction
+    } else {
+        f32::INFINITY
+    }
+}
+
+fn voxel_center_from_indices(x: i32, y: i32, z: i32) -> Vec3 {
+    Vec3::new(
+        (x as f32 + 0.5) * VOXEL_SIZE,
+        (y as f32 + 0.5) * VOXEL_SIZE,
+        (z as f32 + 0.5) * VOXEL_SIZE,
+    )
 }
 
 fn voxel_selection(
