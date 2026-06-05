@@ -5,7 +5,7 @@ use bevy::tasks::{futures_lite::future, AsyncComputeTaskPool, Task};
 use bevy_rapier3d::prelude::*;
 
 #[derive(Component)]
-struct PendingPhysicsCollider(Task<Option<Collider>>);
+struct PendingPhysicsCollider(Task<(u64, Option<Collider>)>);
 
 pub struct PhysicsPlugin;
 
@@ -40,7 +40,9 @@ fn queue_chunk_physics_builds(
     for (entity, chunk) in chunk_query.iter() {
         if chunk.get_voxel(0, 0, 0).is_some() {
             let chunk = chunk.clone();
-            let task = task_pool.spawn(async move { generate_chunk_collider(&chunk) });
+            let revision = chunk.revision;
+            let task =
+                task_pool.spawn(async move { (revision, generate_chunk_collider(&chunk)) });
             commands.entity(entity).insert(PendingPhysicsCollider(task));
         }
     }
@@ -48,12 +50,17 @@ fn queue_chunk_physics_builds(
 
 fn process_chunk_physics_builds(
     mut commands: Commands,
-    mut chunk_query: Query<(Entity, &mut PendingPhysicsCollider)>,
+    mut chunk_query: Query<(Entity, &mut PendingPhysicsCollider, &Chunk)>,
 ) {
-    for (entity, mut pending_collider) in chunk_query.iter_mut() {
-        let Some(collider) = future::block_on(future::poll_once(&mut pending_collider.0)) else {
+    for (entity, mut pending_collider, chunk) in chunk_query.iter_mut() {
+        let Some((revision, collider)) = future::block_on(future::poll_once(&mut pending_collider.0)) else {
             continue;
         };
+
+        if revision != chunk.revision {
+            commands.entity(entity).remove::<PendingPhysicsCollider>();
+            continue;
+        }
 
         if let Some(collider) = collider {
             commands

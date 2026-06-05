@@ -68,6 +68,7 @@ impl ChunkCoord {
 pub struct Chunk {
     pub coord: ChunkCoord,
     pub voxels: Vec<Voxel>,
+    pub revision: u64,
 }
 
 impl Chunk {
@@ -75,6 +76,7 @@ impl Chunk {
         Self {
             coord,
             voxels: vec![Voxel::default(); CHUNK_VOXELS_SIZE * CHUNK_VOXELS_HEIGHT * CHUNK_VOXELS_SIZE],
+            revision: 0,
         }
     }
 
@@ -93,7 +95,10 @@ impl Chunk {
     pub fn set_voxel(&mut self, x: usize, y: usize, z: usize, voxel: Voxel) {
         if x < CHUNK_VOXELS_SIZE && y < CHUNK_VOXELS_HEIGHT && z < CHUNK_VOXELS_SIZE {
             let index = Self::voxel_index(x, y, z);
-            self.voxels[index] = voxel;
+            if self.voxels[index] != voxel {
+                self.voxels[index] = voxel;
+                self.revision += 1;
+            }
         }
     }
 }

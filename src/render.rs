@@ -22,7 +22,7 @@ pub struct Crosshair;
 pub struct DebugAabb;
 
 #[derive(Component)]
-struct PendingRenderMesh(Task<Option<Mesh>>);
+struct PendingRenderMesh(Task<(u64, Option<Mesh>)>);
 
 pub struct RenderPlugin;
 
@@ -175,7 +175,8 @@ fn queue_chunk_render_builds(
     for (entity, chunk) in chunk_query.iter() {
         if chunk.get_voxel(0, 0, 0).is_some() {
             let chunk = chunk.clone();
-            let task = task_pool.spawn(async move { generate_chunk_mesh(&chunk) });
+            let revision = chunk.revision;
+            let task = task_pool.spawn(async move { (revision, generate_chunk_mesh(&chunk)) });
             commands.entity(entity).insert(PendingRenderMesh(task));
         }
     }
@@ -191,9 +192,14 @@ fn process_chunk_render_builds(
     debug_view_mode: Res<DebugViewMode>,
 ) {
     for (entity, mut pending_mesh, chunk) in chunk_query.iter_mut() {
-        let Some(mesh) = future::block_on(future::poll_once(&mut pending_mesh.0)) else {
+        let Some((revision, mesh)) = future::block_on(future::poll_once(&mut pending_mesh.0)) else {
             continue;
         };
+
+        if revision != chunk.revision {
+            commands.entity(entity).remove::<PendingRenderMesh>();
+            continue;
+        }
 
         if let Some(mesh) = mesh {
             let mesh_handle = meshes.add(mesh);

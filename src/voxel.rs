@@ -123,7 +123,7 @@ impl VoxelType {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Voxel {
     pub voxel_type: VoxelType,
 }
