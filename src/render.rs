@@ -33,7 +33,15 @@ struct ChunkMaterial {
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(WireframePlugin::default())
-            .add_systems(Startup, (setup_lighting, setup_chunk_material, setup_crosshair))
+            .add_systems(
+                Startup,
+                (
+                    setup_lighting,
+                    setup_chunk_material,
+                    setup_crosshair,
+                    setup_voxel_highlight,
+                ),
+            )
             .add_systems(
                 Update,
                 (
@@ -132,6 +140,31 @@ fn setup_crosshair(mut commands: Commands) {
         });
 }
 
+fn setup_voxel_highlight(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let mesh_handle = meshes.add(create_highlight_wireframe());
+    let material_handle = materials.add(StandardMaterial {
+        base_color: Color::BLACK,
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        cull_mode: None,
+        ..default()
+    });
+
+    commands.spawn((
+        VoxelHighlight,
+        Mesh3d(mesh_handle),
+        MeshMaterial3d(material_handle),
+        Transform::default(),
+        GlobalTransform::default(),
+        Visibility::Hidden,
+        Name::new("Voxel Highlight"),
+    ));
+}
+
 fn queue_chunk_render_builds(
     mut commands: Commands,
     chunk_query: Query<(Entity, &Chunk), (Without<Mesh3d>, Without<PendingRenderMesh>)>,
@@ -205,44 +238,27 @@ fn sync_render_wireframe_mode(
 }
 
 fn voxel_highlight_system(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
     interaction: Res<PlayerInteraction>,
-    highlight_query: Query<Entity, With<VoxelHighlight>>,
+    mut highlight_query: Query<(&mut Transform, &mut Visibility), With<VoxelHighlight>>,
     chunk_query: Query<&crate::world::Chunk>,
     world: Res<crate::world::World>,
 ) {
-    for entity in highlight_query.iter() {
-        commands.entity(entity).despawn();
-    }
+    let Ok((mut highlight_transform, mut highlight_visibility)) = highlight_query.single_mut() else {
+        return;
+    };
 
     if let Some(selected_voxel_pos) = interaction.selected_voxel_world_pos {
         if let Some(voxel) = world.get_voxel_at_world(selected_voxel_pos, &chunk_query) {
             if voxel.is_solid() {
-                let highlight_pos = selected_voxel_pos - Vec3::splat(VOXEL_SIZE / 2.0);
-
-                let highlight_mesh = create_highlight_wireframe();
-                let mesh_handle = meshes.add(highlight_mesh);
-                let material_handle = materials.add(StandardMaterial {
-                    base_color: Color::BLACK,
-                    alpha_mode: AlphaMode::Blend,
-                    unlit: true,
-                    cull_mode: None,
-                    ..default()
-                });
-
-                commands.spawn((
-                    VoxelHighlight,
-                    Mesh3d(mesh_handle),
-                    MeshMaterial3d(material_handle),
-                    Transform::from_translation(highlight_pos),
-                    GlobalTransform::default(),
-                    Name::new("Voxel Highlight"),
-                ));
+                highlight_transform.translation =
+                    selected_voxel_pos - Vec3::splat(VOXEL_SIZE / 2.0);
+                *highlight_visibility = Visibility::Visible;
+                return;
             }
         }
     }
+
+    *highlight_visibility = Visibility::Hidden;
 }
 
 fn create_highlight_wireframe() -> Mesh {
