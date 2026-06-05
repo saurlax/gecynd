@@ -1,10 +1,11 @@
 use crate::voxel::{VOXEL_SIZE, VoxelFace};
 use crate::world::{Chunk, DebugViewMode, CHUNK_VOXELS_HEIGHT, CHUNK_VOXELS_SIZE};
 use bevy::prelude::*;
+use bevy::tasks::{futures_lite::future, AsyncComputeTaskPool, Task};
 use bevy_rapier3d::prelude::*;
 
 #[derive(Component)]
-struct PendingPhysicsCollider;
+struct PendingPhysicsCollider(Task<Option<Collider>>);
 
 pub struct PhysicsPlugin;
 
@@ -34,26 +35,33 @@ fn queue_chunk_physics_builds(
     mut commands: Commands,
     chunk_query: Query<(Entity, &Chunk), (Without<Collider>, Without<PendingPhysicsCollider>)>,
 ) {
+    let task_pool = AsyncComputeTaskPool::get();
+
     for (entity, chunk) in chunk_query.iter() {
         if chunk.get_voxel(0, 0, 0).is_some() {
-            commands.entity(entity).insert(PendingPhysicsCollider);
+            let chunk = chunk.clone();
+            let task = task_pool.spawn(async move { generate_chunk_collider(&chunk) });
+            commands.entity(entity).insert(PendingPhysicsCollider(task));
         }
     }
 }
 
 fn process_chunk_physics_builds(
     mut commands: Commands,
-    chunk_query: Query<(Entity, &Chunk), With<PendingPhysicsCollider>>,
+    mut chunk_query: Query<(Entity, &mut PendingPhysicsCollider)>,
 ) {
-    for (entity, chunk) in chunk_query.iter() {
-        let collider = generate_chunk_collider(chunk);
-        commands.entity(entity).remove::<PendingPhysicsCollider>();
+    for (entity, mut pending_collider) in chunk_query.iter_mut() {
+        let Some(collider) = future::block_on(future::poll_once(&mut pending_collider.0)) else {
+            continue;
+        };
 
         if let Some(collider) = collider {
             commands
                 .entity(entity)
                 .insert((ChunkPhysics, RigidBody::Fixed, collider));
         }
+
+        commands.entity(entity).remove::<PendingPhysicsCollider>();
     }
 }
 
