@@ -67,41 +67,35 @@ impl ChunkCoord {
 #[derive(Component)]
 pub struct Chunk {
     pub coord: ChunkCoord,
-    pub voxels: Vec<Vec<Vec<Voxel>>>,
+    pub voxels: Vec<Voxel>,
 }
 
 impl Chunk {
     pub fn new(coord: ChunkCoord) -> Self {
-        let mut voxels = Vec::with_capacity(CHUNK_VOXELS_SIZE);
-        for _ in 0..CHUNK_VOXELS_SIZE {
-            let mut y_vec = Vec::with_capacity(CHUNK_VOXELS_HEIGHT);
-            for _ in 0..CHUNK_VOXELS_HEIGHT {
-                let z_vec = vec![Voxel::default(); CHUNK_VOXELS_SIZE];
-                y_vec.push(z_vec);
-            }
-            voxels.push(y_vec);
-        }
-        
         Self {
             coord,
-            voxels,
+            voxels: vec![Voxel::default(); CHUNK_VOXELS_SIZE * CHUNK_VOXELS_HEIGHT * CHUNK_VOXELS_SIZE],
         }
     }
-    
+
+    fn voxel_index(x: usize, y: usize, z: usize) -> usize {
+        x + z * CHUNK_VOXELS_SIZE + y * CHUNK_VOXELS_SIZE * CHUNK_VOXELS_SIZE
+    }
+
     pub fn get_voxel(&self, x: usize, y: usize, z: usize) -> Option<&Voxel> {
         if x < CHUNK_VOXELS_SIZE && y < CHUNK_VOXELS_HEIGHT && z < CHUNK_VOXELS_SIZE {
-            Some(&self.voxels[x][y][z])
+            Some(&self.voxels[Self::voxel_index(x, y, z)])
         } else {
             None
         }
     }
-    
+
     pub fn set_voxel(&mut self, x: usize, y: usize, z: usize, voxel: Voxel) {
         if x < CHUNK_VOXELS_SIZE && y < CHUNK_VOXELS_HEIGHT && z < CHUNK_VOXELS_SIZE {
-            self.voxels[x][y][z] = voxel;
+            let index = Self::voxel_index(x, y, z);
+            self.voxels[index] = voxel;
         }
     }
-    
 }
 
 #[derive(Resource)]
