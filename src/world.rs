@@ -1,6 +1,6 @@
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
-use std::sync::{Arc, Mutex};
+use bevy::tasks::{futures_lite::future, AsyncComputeTaskPool, Task};
 
 use crate::voxel::{Voxel, VOXEL_SIZE};
 use crate::terrain::TerrainGenerator;
@@ -101,7 +101,7 @@ impl Chunk {
 #[derive(Resource)]
 pub struct World {
     pub chunks: HashMap<ChunkCoord, Entity>,
-    pub pending_chunks: HashMap<ChunkCoord, Arc<Mutex<Option<Chunk>>>>,
+    pub pending_chunks: HashMap<ChunkCoord, Task<Chunk>>,
 }
 
 impl Default for World {
@@ -117,7 +117,7 @@ impl Default for World {
 pub struct InitialWorldGeneration {
     pub started: bool,
     pub finished: bool,
-    pub result: Arc<Mutex<Option<Vec<Chunk>>>>,
+    pub task: Option<Task<Vec<Chunk>>>,
 }
 
 impl Default for InitialWorldGeneration {
@@ -125,7 +125,7 @@ impl Default for InitialWorldGeneration {
         Self {
             started: false,
             finished: false,
-            result: Arc::new(Mutex::new(None)),
+            task: None,
         }
     }
 }
@@ -249,18 +249,15 @@ fn queue_chunk_generation(world: &mut World, coord: ChunkCoord) {
         return;
     }
 
-    let result = Arc::new(Mutex::new(None));
-    world.pending_chunks.insert(coord, Arc::clone(&result));
-
-    std::thread::spawn(move || {
+    let task_pool = AsyncComputeTaskPool::get();
+    let task = task_pool.spawn(async move {
         let terrain_generator = TerrainGenerator::new();
         let mut chunk = Chunk::new(coord);
         terrain_generator.generate_chunk(&mut chunk);
-
-        if let Ok(mut guard) = result.lock() {
-            *guard = Some(chunk);
-        }
+        chunk
     });
+
+    world.pending_chunks.insert(coord, task);
 }
 
 fn start_initial_world_generation(mut generation_state: ResMut<InitialWorldGeneration>) {
@@ -269,10 +266,10 @@ fn start_initial_world_generation(mut generation_state: ResMut<InitialWorldGener
     }
 
     generation_state.started = true;
-    let result = Arc::clone(&generation_state.result);
     let spawn_chunk = ChunkCoord::from_world_pos(initial_player_spawn_position());
+    let task_pool = AsyncComputeTaskPool::get();
 
-    std::thread::spawn(move || {
+    generation_state.task = Some(task_pool.spawn(async move {
         let terrain_generator = TerrainGenerator::new();
         let mut chunks = Vec::new();
 
@@ -291,10 +288,8 @@ fn start_initial_world_generation(mut generation_state: ResMut<InitialWorldGener
             }
         }
 
-        if let Ok(mut guard) = result.lock() {
-            *guard = Some(chunks);
-        }
-    });
+        chunks
+    }));
 }
 
 fn complete_initial_world_generation(
@@ -306,15 +301,13 @@ fn complete_initial_world_generation(
         return;
     }
 
-    let mut result_guard = match generation_state.result.try_lock() {
-        Ok(guard) => guard,
-        Err(_) => return,
-    };
-
-    let Some(chunks) = result_guard.take() else {
+    let Some(task) = generation_state.task.as_mut() else {
         return;
     };
-    drop(result_guard);
+    let Some(chunks) = future::block_on(future::poll_once(task)) else {
+        return;
+    };
+    generation_state.task = None;
 
     for chunk in chunks {
         let coord = chunk.coord;
@@ -333,13 +326,9 @@ fn complete_pending_chunk_generation_system(
 ) {
     let mut ready_chunks: Vec<(ChunkCoord, Chunk)> = world
         .pending_chunks
-        .iter()
-        .filter_map(|(coord, result)| {
-            let Ok(mut guard) = result.try_lock() else {
-                return None;
-            };
-
-            guard.take().map(|chunk| (*coord, chunk))
+        .iter_mut()
+        .filter_map(|(coord, task)| {
+            future::block_on(future::poll_once(task)).map(|chunk| (*coord, chunk))
         })
         .collect();
 
