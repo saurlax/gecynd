@@ -55,12 +55,26 @@ impl Default for CursorState {
     }
 }
 
+#[derive(Resource)]
+pub struct PlacementCooldown {
+    pub last_place_time: f32,
+}
+
+impl Default for PlacementCooldown {
+    fn default() -> Self {
+        Self {
+            last_place_time: -f32::INFINITY,
+        }
+    }
+}
+
 pub struct PlayerPlugin;
 
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PlayerInteraction>()
             .init_resource::<CursorState>()
+            .init_resource::<PlacementCooldown>()
             .add_systems(Startup, setup_cursor_grab)
             .add_systems(
                 Update,
@@ -445,6 +459,7 @@ fn voxel_interaction(
     )>,
     player_query: Query<&Transform, With<Player>>,
     time: Res<Time>,
+    mut placement_cooldown: ResMut<PlacementCooldown>,
 ) {
     if let Ok(cursor_options) = cursor_query.single() {
         if cursor_options.grab_mode != CursorGrabMode::Locked {
@@ -460,36 +475,33 @@ fn voxel_interaction(
         }
         
         if mouse_input.pressed(MouseButton::Right) {
-            static mut LAST_PLACE_TIME: f32 = 0.0;
             let current_time = time.elapsed_secs();
-            
-            unsafe {
-                if current_time - LAST_PLACE_TIME > 0.1 {
-                    if let Some(hit_face) = interaction.hit_face {
-                        let place_pos = calculate_placement_position(selected_voxel_pos, hit_face);
-                        
-                        if let Ok(player_transform) = player_query.single() {
-                            let player_pos = player_transform.translation;
-                            let player_min = player_pos + Vec3::new(-0.25, 0.0, -0.25);
-                            let player_max = player_pos + Vec3::new(0.25, 2.0, 0.25);
-                            let voxel_min = place_pos - Vec3::splat(VOXEL_SIZE / 2.0);
-                            let voxel_max = place_pos + Vec3::splat(VOXEL_SIZE / 2.0);
-                            
-                            let overlaps = player_min.x < voxel_max.x && player_max.x > voxel_min.x &&
-                                          player_min.y < voxel_max.y && player_max.y > voxel_min.y &&
-                                          player_min.z < voxel_max.z && player_max.z > voxel_min.z;
-                            
-                            if overlaps {
-                                return;
-                            }
+
+            if current_time - placement_cooldown.last_place_time > 0.1 {
+                if let Some(hit_face) = interaction.hit_face {
+                    let place_pos = calculate_placement_position(selected_voxel_pos, hit_face);
+
+                    if let Ok(player_transform) = player_query.single() {
+                        let player_pos = player_transform.translation;
+                        let player_min = player_pos + Vec3::new(-0.25, 0.0, -0.25);
+                        let player_max = player_pos + Vec3::new(0.25, 2.0, 0.25);
+                        let voxel_min = place_pos - Vec3::splat(VOXEL_SIZE / 2.0);
+                        let voxel_max = place_pos + Vec3::splat(VOXEL_SIZE / 2.0);
+
+                        let overlaps = player_min.x < voxel_max.x && player_max.x > voxel_min.x &&
+                                      player_min.y < voxel_max.y && player_max.y > voxel_min.y &&
+                                      player_min.z < voxel_max.z && player_max.z > voxel_min.z;
+
+                        if overlaps {
+                            return;
                         }
-                        
-                        if let Some(existing_voxel) = world.get_voxel_at_world(place_pos, &chunk_query_set.p0()) {
-                            if !existing_voxel.is_solid() {
-                                if world.set_voxel_at_world(place_pos, Voxel::new(VoxelType::Stone), &mut chunk_query_set.p1()) {
-                                    mark_chunk_for_update(&mut commands, &world, place_pos);
-                                    LAST_PLACE_TIME = current_time;
-                                }
+                    }
+
+                    if let Some(existing_voxel) = world.get_voxel_at_world(place_pos, &chunk_query_set.p0()) {
+                        if !existing_voxel.is_solid() {
+                            if world.set_voxel_at_world(place_pos, Voxel::new(VoxelType::Stone), &mut chunk_query_set.p1()) {
+                                mark_chunk_for_update(&mut commands, &world, place_pos);
+                                placement_cooldown.last_place_time = current_time;
                             }
                         }
                     }
