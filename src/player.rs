@@ -93,7 +93,7 @@ impl Plugin for PlayerPlugin {
                     voxel_selection,
                 ),
             );
-        app.add_systems(FixedUpdate, player_movement);
+        app.add_systems(FixedUpdate, (player_movement, player_unstuck.after(player_movement)));
     }
 }
 
@@ -532,16 +532,82 @@ fn mark_chunk_for_update(commands: &mut Commands, world: &World, world_pos: Vec3
             if let Some(chunk_entity) = world.chunks.get(&dirty_chunk) {
                 commands
                     .entity(*chunk_entity)
-                    .remove::<crate::render::ChunkMesh>()
-                    .remove::<Mesh3d>()
-                    .remove::<MeshMaterial3d<StandardMaterial>>()
-                    .remove::<crate::physics::ChunkPhysics>()
-                    .remove::<Collider>()
-                    .insert(NeedsRerender);
+                    .insert((NeedsRenderRefresh, NeedsPhysicsRefresh));
             }
         }
     }
 }
 
 #[derive(Component)]
-pub struct NeedsRerender;
+pub struct NeedsRenderRefresh;
+
+#[derive(Component)]
+pub struct NeedsPhysicsRefresh;
+
+fn player_unstuck(
+    mut player_query: Query<&mut Transform, With<Player>>,
+    world: Res<World>,
+    chunk_query: Query<&crate::world::Chunk>,
+) {
+    let Ok(mut player_transform) = player_query.single_mut() else {
+        return;
+    };
+
+    let current_position = player_transform.translation;
+    if !player_intersects_solid_voxel(&world, &chunk_query, current_position) {
+        return;
+    }
+
+    for up_steps in 1..=16 {
+        let vertical_offset = Vec3::Y * (up_steps as f32 * VOXEL_SIZE);
+        for horizontal_offset in unstuck_horizontal_offsets() {
+            let candidate_position = current_position + vertical_offset + horizontal_offset;
+            if !player_intersects_solid_voxel(&world, &chunk_query, candidate_position) {
+                player_transform.translation = candidate_position;
+                return;
+            }
+        }
+    }
+}
+
+fn player_intersects_solid_voxel(
+    world: &World,
+    chunk_query: &Query<&crate::world::Chunk>,
+    player_position: Vec3,
+) -> bool {
+    let player_min = player_position + Vec3::new(-0.25, 0.0, -0.25);
+    let player_max = player_position + Vec3::new(0.25, 2.0, 0.25);
+
+    let min_x = (player_min.x / VOXEL_SIZE).floor() as i32;
+    let min_y = (player_min.y / VOXEL_SIZE).floor() as i32;
+    let min_z = (player_min.z / VOXEL_SIZE).floor() as i32;
+    let max_x = ((player_max.x - f32::EPSILON) / VOXEL_SIZE).floor() as i32;
+    let max_y = ((player_max.y - f32::EPSILON) / VOXEL_SIZE).floor() as i32;
+    let max_z = ((player_max.z - f32::EPSILON) / VOXEL_SIZE).floor() as i32;
+
+    for voxel_x in min_x..=max_x {
+        for voxel_y in min_y..=max_y {
+            for voxel_z in min_z..=max_z {
+                let voxel_center = voxel_center_from_indices(voxel_x, voxel_y, voxel_z);
+                if world
+                    .get_voxel_at_world(voxel_center, chunk_query)
+                    .is_some_and(|voxel| voxel.is_solid())
+                {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
+}
+
+fn unstuck_horizontal_offsets() -> [Vec3; 5] {
+    [
+        Vec3::ZERO,
+        Vec3::new(VOXEL_SIZE, 0.0, 0.0),
+        Vec3::new(-VOXEL_SIZE, 0.0, 0.0),
+        Vec3::new(0.0, 0.0, VOXEL_SIZE),
+        Vec3::new(0.0, 0.0, -VOXEL_SIZE),
+    ]
+}

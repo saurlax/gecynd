@@ -33,18 +33,22 @@ fn sync_physics_debug_mode(
 
 fn queue_chunk_physics_builds(
     mut commands: Commands,
-    chunk_query: Query<(Entity, &Chunk), (Without<Collider>, Without<PendingPhysicsCollider>)>,
+    chunk_query: Query<
+        (Entity, &Chunk),
+        (
+            With<crate::player::NeedsPhysicsRefresh>,
+            Without<PendingPhysicsCollider>,
+        ),
+    >,
 ) {
     let task_pool = AsyncComputeTaskPool::get();
 
     for (entity, chunk) in chunk_query.iter() {
-        if chunk.get_voxel(0, 0, 0).is_some() {
-            let chunk = chunk.clone();
-            let revision = chunk.revision;
-            let task =
-                task_pool.spawn(async move { (revision, generate_chunk_collider(&chunk)) });
-            commands.entity(entity).insert(PendingPhysicsCollider(task));
-        }
+        let chunk = chunk.clone();
+        let revision = chunk.revision;
+        let task =
+            task_pool.spawn(async move { (revision, generate_chunk_collider(&chunk)) });
+        commands.entity(entity).insert(PendingPhysicsCollider(task));
     }
 }
 
@@ -65,7 +69,15 @@ fn process_chunk_physics_builds(
         if let Some(collider) = collider {
             commands
                 .entity(entity)
+                .remove::<crate::player::NeedsPhysicsRefresh>()
                 .insert((ChunkPhysics, RigidBody::Fixed, collider));
+        } else {
+            commands
+                .entity(entity)
+                .remove::<PendingPhysicsCollider>()
+                .remove::<crate::player::NeedsPhysicsRefresh>()
+                .remove::<ChunkPhysics>()
+                .remove::<Collider>();
         }
 
         commands.entity(entity).remove::<PendingPhysicsCollider>();

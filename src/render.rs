@@ -50,7 +50,6 @@ impl Plugin for RenderPlugin {
                     queue_chunk_render_builds.before(process_chunk_render_builds),
                     process_chunk_render_builds.before(debug_aabb_system),
                     voxel_highlight_system,
-                    force_rerender_system,
                     debug_aabb_system,
                 ),
             );
@@ -168,17 +167,21 @@ fn setup_voxel_highlight(
 
 fn queue_chunk_render_builds(
     mut commands: Commands,
-    chunk_query: Query<(Entity, &Chunk), (Without<Mesh3d>, Without<PendingRenderMesh>)>,
+    chunk_query: Query<
+        (Entity, &Chunk),
+        (
+            With<crate::player::NeedsRenderRefresh>,
+            Without<PendingRenderMesh>,
+        ),
+    >,
 ) {
     let task_pool = AsyncComputeTaskPool::get();
 
     for (entity, chunk) in chunk_query.iter() {
-        if chunk.get_voxel(0, 0, 0).is_some() {
-            let chunk = chunk.clone();
-            let revision = chunk.revision;
-            let task = task_pool.spawn(async move { (revision, generate_chunk_mesh(&chunk)) });
-            commands.entity(entity).insert(PendingRenderMesh(task));
-        }
+        let chunk = chunk.clone();
+        let revision = chunk.revision;
+        let task = task_pool.spawn(async move { (revision, generate_chunk_mesh(&chunk)) });
+        commands.entity(entity).insert(PendingRenderMesh(task));
     }
 }
 
@@ -212,6 +215,7 @@ fn process_chunk_render_builds(
 
             let mut entity_commands = commands.entity(entity);
             entity_commands.remove::<PendingRenderMesh>();
+            entity_commands.remove::<crate::player::NeedsRenderRefresh>();
             entity_commands.insert((
                 ChunkMesh,
                 Mesh3d(mesh_handle),
@@ -229,7 +233,14 @@ fn process_chunk_render_builds(
                 create_debug_aabb_for_chunk(&mut commands, &mut meshes, &mut materials, entity);
             }
         } else {
-            commands.entity(entity).remove::<PendingRenderMesh>();
+            commands
+                .entity(entity)
+                .remove::<PendingRenderMesh>()
+                .remove::<crate::player::NeedsRenderRefresh>()
+                .remove::<ChunkMesh>()
+                .remove::<Mesh3d>()
+                .remove::<MeshMaterial3d<StandardMaterial>>()
+                .remove::<Wireframe>();
         }
 
         commands.entity(entity).remove::<PendingRenderMesh>();
@@ -584,13 +595,3 @@ fn add_face(
     ]);
 }
 
-fn force_rerender_system(
-    mut commands: Commands,
-    rerender_query: Query<Entity, With<crate::player::NeedsRerender>>,
-) {
-    for entity in rerender_query.iter() {
-        commands
-            .entity(entity)
-            .remove::<crate::player::NeedsRerender>();
-    }
-}

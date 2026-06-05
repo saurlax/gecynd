@@ -301,7 +301,13 @@ fn complete_initial_world_generation(
 
     for chunk in chunks {
         let coord = chunk.coord;
-        let entity = commands.spawn(chunk).id();
+        let entity = commands
+            .spawn((
+                chunk,
+                crate::player::NeedsRenderRefresh,
+                crate::player::NeedsPhysicsRefresh,
+            ))
+            .id();
         world.chunks.insert(coord, entity);
     }
 
@@ -333,7 +339,13 @@ fn complete_pending_chunk_generation_system(
 
     for (coord, chunk) in ready_chunks {
         world.pending_chunks.remove(&coord);
-        let entity = commands.spawn(chunk).id();
+        let entity = commands
+            .spawn((
+                chunk,
+                crate::player::NeedsRenderRefresh,
+                crate::player::NeedsPhysicsRefresh,
+            ))
+            .id();
         world.chunks.insert(coord, entity);
     }
 }
