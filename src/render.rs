@@ -3,6 +3,7 @@ use bevy::pbr::wireframe::{Wireframe, WireframePlugin};
 use bevy::prelude::*;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::asset::RenderAssetUsages;
+use bevy::tasks::{futures_lite::future, AsyncComputeTaskPool, Task};
 
 use crate::player::PlayerInteraction;
 use crate::voxel::{VOXEL_SIZE, VoxelFace};
@@ -21,7 +22,7 @@ pub struct Crosshair;
 pub struct DebugAabb;
 
 #[derive(Component)]
-struct PendingRenderMesh;
+struct PendingRenderMesh(Task<Option<Mesh>>);
 
 pub struct RenderPlugin;
 
@@ -169,9 +170,13 @@ fn queue_chunk_render_builds(
     mut commands: Commands,
     chunk_query: Query<(Entity, &Chunk), (Without<Mesh3d>, Without<PendingRenderMesh>)>,
 ) {
+    let task_pool = AsyncComputeTaskPool::get();
+
     for (entity, chunk) in chunk_query.iter() {
         if chunk.get_voxel(0, 0, 0).is_some() {
-            commands.entity(entity).insert(PendingRenderMesh);
+            let chunk = chunk.clone();
+            let task = task_pool.spawn(async move { generate_chunk_mesh(&chunk) });
+            commands.entity(entity).insert(PendingRenderMesh(task));
         }
     }
 }
@@ -181,12 +186,16 @@ fn process_chunk_render_builds(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     chunk_material: Res<ChunkMaterial>,
-    chunk_query: Query<(Entity, &Chunk), With<PendingRenderMesh>>,
+    mut chunk_query: Query<(Entity, &mut PendingRenderMesh, &Chunk)>,
     debug_state: Res<crate::world::DebugAabbState>,
     debug_view_mode: Res<DebugViewMode>,
 ) {
-    for (entity, chunk) in chunk_query.iter() {
-        if let Some(mesh) = generate_chunk_mesh(chunk) {
+    for (entity, mut pending_mesh, chunk) in chunk_query.iter_mut() {
+        let Some(mesh) = future::block_on(future::poll_once(&mut pending_mesh.0)) else {
+            continue;
+        };
+
+        if let Some(mesh) = mesh {
             let mesh_handle = meshes.add(mesh);
             let chunk_world_pos = chunk_world_origin(chunk.coord);
             let wireframe = if debug_view_mode.render_wireframe {
@@ -216,6 +225,8 @@ fn process_chunk_render_builds(
         } else {
             commands.entity(entity).remove::<PendingRenderMesh>();
         }
+
+        commands.entity(entity).remove::<PendingRenderMesh>();
     }
 }
 

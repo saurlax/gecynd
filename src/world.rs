@@ -64,7 +64,7 @@ impl ChunkCoord {
     }
 }
 
-#[derive(Component)]
+#[derive(Component, Clone)]
 pub struct Chunk {
     pub coord: ChunkCoord,
     pub voxels: Vec<Voxel>,
