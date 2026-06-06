@@ -30,8 +30,8 @@ pub struct PlayerMotor {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BrushShape {
     Single,
-    Square,
-    Circle,
+    Cube,
+    Sphere,
 }
 
 #[derive(Resource)]
@@ -484,9 +484,9 @@ fn brush_selection_input(
     if keyboard_input.just_pressed(KeyCode::Digit4) {
         interaction.brush_shape = BrushShape::Single;
     } else if keyboard_input.just_pressed(KeyCode::Digit5) {
-        interaction.brush_shape = BrushShape::Square;
+        interaction.brush_shape = BrushShape::Cube;
     } else if keyboard_input.just_pressed(KeyCode::Digit6) {
-        interaction.brush_shape = BrushShape::Circle;
+        interaction.brush_shape = BrushShape::Sphere;
     }
 
     if keyboard_input.just_pressed(KeyCode::KeyZ) {
@@ -501,12 +501,14 @@ fn calculate_placement_position(voxel_center: Vec3, face: VoxelFace) -> Vec3 {
     voxel_center + Vec3::new(dx as f32, dy as f32, dz as f32) * VOXEL_SIZE
 }
 
-fn build_brush_positions(
-    center: Vec3,
-    face: VoxelFace,
-    brush_shape: BrushShape,
-    brush_size: i32,
-) -> Vec<Vec3> {
+pub fn brush_world_size(brush_shape: BrushShape, brush_size: i32) -> f32 {
+    match brush_shape {
+        BrushShape::Single => VOXEL_SIZE,
+        BrushShape::Cube | BrushShape::Sphere => brush_size as f32 * VOXEL_SIZE,
+    }
+}
+
+fn build_brush_positions(center: Vec3, brush_shape: BrushShape, brush_size: i32) -> Vec<Vec3> {
     if brush_shape == BrushShape::Single {
         return vec![center];
     }
@@ -517,27 +519,52 @@ fn build_brush_positions(
     let center_bias = if brush_size % 2 == 0 { 0.5 } else { 0.0 };
     let radius = brush_size as f32 * 0.5;
 
-    for a in start..=end {
-        for b in start..=end {
-            if brush_shape == BrushShape::Circle {
-                let sample_a = a as f32 + center_bias;
-                let sample_b = b as f32 + center_bias;
-                if sample_a * sample_a + sample_b * sample_b > radius * radius {
-                    continue;
+    for x in start..=end {
+        for y in start..=end {
+            for z in start..=end {
+                if brush_shape == BrushShape::Sphere {
+                    let sample_x = x as f32 + center_bias;
+                    let sample_y = y as f32 + center_bias;
+                    let sample_z = z as f32 + center_bias;
+                    if sample_x * sample_x + sample_y * sample_y + sample_z * sample_z
+                        > radius * radius
+                    {
+                        continue;
+                    }
                 }
+
+                let offset = Vec3::new(x as f32, y as f32, z as f32) * VOXEL_SIZE;
+                positions.push(center + offset);
             }
-
-            let offset = match face {
-                VoxelFace::NegativeX | VoxelFace::PositiveX => Vec3::new(0.0, a as f32, b as f32),
-                VoxelFace::NegativeY | VoxelFace::PositiveY => Vec3::new(a as f32, 0.0, b as f32),
-                VoxelFace::NegativeZ | VoxelFace::PositiveZ => Vec3::new(a as f32, b as f32, 0.0),
-            } * VOXEL_SIZE;
-
-            positions.push(center + offset);
         }
     }
 
     positions
+}
+
+pub fn brush_preview_origin(center: Vec3, brush_shape: BrushShape, brush_size: i32) -> Vec3 {
+    match brush_shape {
+        BrushShape::Single => center - Vec3::splat(VOXEL_SIZE / 2.0),
+        BrushShape::Cube | BrushShape::Sphere => {
+            let half_extent = brush_world_size(brush_shape, brush_size) * 0.5;
+            center - Vec3::splat(half_extent)
+        }
+    }
+}
+
+pub fn placement_center(selected_voxel_center: Vec3, hit_face: VoxelFace) -> Vec3 {
+    calculate_placement_position(selected_voxel_center, hit_face)
+}
+
+pub fn brush_center_for_edit(
+    selected_voxel_center: Vec3,
+    hit_face: Option<VoxelFace>,
+    brush_shape: BrushShape,
+) -> Option<Vec3> {
+    match brush_shape {
+        BrushShape::Single => hit_face.map(|face| placement_center(selected_voxel_center, face)),
+        BrushShape::Cube | BrushShape::Sphere => Some(selected_voxel_center),
+    }
 }
 
 fn player_overlaps_voxel(player_pos: Vec3, voxel_center: Vec3) -> bool {
@@ -573,10 +600,8 @@ fn voxel_interaction(
 
     if let Some(selected_voxel_pos) = interaction.selected_voxel_world_pos {
         if mouse_input.just_pressed(MouseButton::Left) {
-            let hit_face = interaction.hit_face.unwrap_or(VoxelFace::PositiveY);
             let target_positions = build_brush_positions(
                 selected_voxel_pos,
-                hit_face,
                 interaction.brush_shape,
                 interaction.brush_size,
             );
@@ -596,11 +621,13 @@ fn voxel_interaction(
             let current_time = time.elapsed_secs();
 
             if current_time - placement_cooldown.last_place_time > 0.1 {
-                if let Some(hit_face) = interaction.hit_face {
-                    let place_pos = calculate_placement_position(selected_voxel_pos, hit_face);
+                if let Some(place_center) = brush_center_for_edit(
+                    selected_voxel_pos,
+                    interaction.hit_face,
+                    interaction.brush_shape,
+                ) {
                     let target_positions = build_brush_positions(
-                        place_pos,
-                        hit_face,
+                        place_center,
                         interaction.brush_shape,
                         interaction.brush_size,
                     );

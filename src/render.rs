@@ -5,7 +5,9 @@ use bevy::pbr::wireframe::{Wireframe, WireframePlugin};
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task, futures_lite::future};
 
-use crate::player::PlayerInteraction;
+use crate::player::{
+    BrushShape, PlayerInteraction, brush_center_for_edit, brush_preview_origin, brush_world_size,
+};
 use crate::voxel::{VOXEL_SIZE, VoxelFace, VoxelType};
 use crate::world::{
     CHUNK_VOXELS_HEIGHT, CHUNK_VOXELS_SIZE, Chunk, DebugViewMode, chunk_world_height,
@@ -145,7 +147,7 @@ fn setup_voxel_highlight(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let mesh_handle = meshes.add(create_highlight_wireframe());
+    let mesh_handle = meshes.add(create_single_voxel_wireframe());
     let material_handle = materials.add(StandardMaterial {
         base_color: Color::BLACK,
         alpha_mode: AlphaMode::Blend,
@@ -268,11 +270,16 @@ fn sync_render_wireframe_mode(
 
 fn voxel_highlight_system(
     interaction: Res<PlayerInteraction>,
-    mut highlight_query: Query<(&mut Transform, &mut Visibility), With<VoxelHighlight>>,
+    mut highlight_query: Query<
+        (&mut Transform, &mut Visibility, &mut Mesh3d),
+        With<VoxelHighlight>,
+    >,
+    mut meshes: ResMut<Assets<Mesh>>,
     chunk_query: Query<&crate::world::Chunk>,
     world: Res<crate::world::World>,
 ) {
-    let Ok((mut highlight_transform, mut highlight_visibility)) = highlight_query.single_mut()
+    let Ok((mut highlight_transform, mut highlight_visibility, mut highlight_mesh)) =
+        highlight_query.single_mut()
     else {
         return;
     };
@@ -280,8 +287,35 @@ fn voxel_highlight_system(
     if let Some(selected_voxel_pos) = interaction.selected_voxel_world_pos {
         if let Some(voxel) = world.get_voxel_at_world(selected_voxel_pos, &chunk_query) {
             if voxel.is_solid() {
-                highlight_transform.translation =
-                    selected_voxel_pos - Vec3::splat(VOXEL_SIZE / 2.0);
+                let Some(preview_center) = brush_center_for_edit(
+                    selected_voxel_pos,
+                    interaction.hit_face,
+                    interaction.brush_shape,
+                ) else {
+                    *highlight_visibility = Visibility::Hidden;
+                    return;
+                };
+
+                let mesh = match interaction.brush_shape {
+                    BrushShape::Single => create_single_voxel_wireframe(),
+                    BrushShape::Cube => {
+                        let size =
+                            brush_world_size(interaction.brush_shape, interaction.brush_size);
+                        create_box_wireframe(Vec3::splat(size))
+                    }
+                    BrushShape::Sphere => {
+                        let radius =
+                            brush_world_size(interaction.brush_shape, interaction.brush_size) * 0.5;
+                        create_sphere_wireframe(radius, 24, 12)
+                    }
+                };
+
+                highlight_mesh.0 = meshes.add(mesh);
+                highlight_transform.translation = brush_preview_origin(
+                    preview_center,
+                    interaction.brush_shape,
+                    interaction.brush_size,
+                );
                 *highlight_visibility = Visibility::Visible;
                 return;
             }
@@ -291,18 +325,22 @@ fn voxel_highlight_system(
     *highlight_visibility = Visibility::Hidden;
 }
 
-fn create_highlight_wireframe() -> Mesh {
-    let size = VOXEL_SIZE;
+fn create_single_voxel_wireframe() -> Mesh {
+    create_box_wireframe(Vec3::splat(VOXEL_SIZE))
+}
 
+fn create_box_wireframe(size: Vec3) -> Mesh {
+    let min = Vec3::ZERO;
+    let max = size;
     let vertices = vec![
-        [0.0, 0.0, 0.0],
-        [size, 0.0, 0.0],
-        [size, 0.0, size],
-        [0.0, 0.0, size],
-        [0.0, size, 0.0],
-        [size, size, 0.0],
-        [size, size, size],
-        [0.0, size, size],
+        [min.x, min.y, min.z],
+        [max.x, min.y, min.z],
+        [max.x, min.y, max.z],
+        [min.x, min.y, max.z],
+        [min.x, max.y, min.z],
+        [max.x, max.y, min.z],
+        [max.x, max.y, max.z],
+        [min.x, max.y, max.z],
     ];
 
     let indices = vec![
@@ -318,6 +356,66 @@ fn create_highlight_wireframe() -> Mesh {
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
     mesh.insert_indices(Indices::U32(indices));
 
+    mesh
+}
+
+fn create_sphere_wireframe(radius: f32, segments: usize, rings: usize) -> Mesh {
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+
+    for axis in 0..3 {
+        let start_index = vertices.len() as u32;
+        for i in 0..segments {
+            let angle = i as f32 / segments as f32 * std::f32::consts::TAU;
+            let (sin, cos) = angle.sin_cos();
+            let point = match axis {
+                0 => Vec3::new(radius, cos * radius + radius, sin * radius + radius),
+                1 => Vec3::new(cos * radius + radius, radius, sin * radius + radius),
+                _ => Vec3::new(cos * radius + radius, sin * radius + radius, radius),
+            };
+            vertices.push([point.x, point.y, point.z]);
+        }
+
+        for i in 0..segments {
+            let current = start_index + i as u32;
+            let next = start_index + ((i + 1) % segments) as u32;
+            indices.push(current);
+            indices.push(next);
+        }
+    }
+
+    if rings > 2 {
+        for ring in 1..rings - 1 {
+            let latitude = -std::f32::consts::FRAC_PI_2
+                + ring as f32 / (rings - 1) as f32 * std::f32::consts::PI;
+            let ring_radius = radius * latitude.cos();
+            let y = radius * latitude.sin() + radius;
+
+            let start_index = vertices.len() as u32;
+            for i in 0..segments {
+                let angle = i as f32 / segments as f32 * std::f32::consts::TAU;
+                let (sin, cos) = angle.sin_cos();
+                let point = Vec3::new(cos * ring_radius + radius, y, sin * ring_radius + radius);
+                vertices.push([point.x, point.y, point.z]);
+            }
+
+            for i in 0..segments {
+                let current = start_index + i as u32;
+                let next = start_index + ((i + 1) % segments) as u32;
+                indices.push(current);
+                indices.push(next);
+            }
+        }
+    }
+
+    let normals = vec![[0.0, 1.0, 0.0]; vertices.len()];
+    let uvs = vec![[0.0, 0.0]; vertices.len()];
+
+    let mut mesh = Mesh::new(PrimitiveTopology::LineList, RenderAssetUsages::RENDER_WORLD);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vertices);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    mesh.insert_indices(Indices::U32(indices));
     mesh
 }
 

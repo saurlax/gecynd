@@ -110,7 +110,7 @@ fn setup_ui(mut commands: Commands) {
                         "Left Click: Break Block",
                         "Right Click: Place Block",
                         "1/2/3: Select Grass/Dirt/Stone",
-                        "4/5/6: Select Single/Square/Circle",
+                        "4/5/6: Select Single/Cube/Sphere",
                         "Z/X: Decrease/Increase Brush Size",
                         "Shift: Sprint",
                         "F1: Toggle AABB Debug",
@@ -226,8 +226,8 @@ fn update_ui_text(
     if let Ok(mut text) = text_queries.p3().single_mut() {
         let brush_name = match interaction.brush_shape {
             BrushShape::Single => "Single",
-            BrushShape::Square => "Square",
-            BrushShape::Circle => "Circle",
+            BrushShape::Cube => "Cube",
+            BrushShape::Sphere => "Sphere",
         };
         **text = format!(
             "Brush: {brush_name} | Size: {} [4/5/6 shape, Z/X size]",
