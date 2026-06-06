@@ -1,13 +1,16 @@
+use bevy::asset::RenderAssetUsages;
 use bevy::light::{NotShadowCaster, NotShadowReceiver};
+use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::pbr::wireframe::{Wireframe, WireframePlugin};
 use bevy::prelude::*;
-use bevy::mesh::{Indices, PrimitiveTopology};
-use bevy::asset::RenderAssetUsages;
-use bevy::tasks::{futures_lite::future, AsyncComputeTaskPool, Task};
+use bevy::tasks::{AsyncComputeTaskPool, Task, futures_lite::future};
 
 use crate::player::PlayerInteraction;
-use crate::voxel::{VOXEL_SIZE, VoxelFace};
-use crate::world::{chunk_world_height, chunk_world_origin, Chunk, DebugViewMode, CHUNK_VOXELS_HEIGHT, CHUNK_VOXELS_SIZE};
+use crate::voxel::{VOXEL_SIZE, VoxelFace, VoxelType};
+use crate::world::{
+    CHUNK_VOXELS_HEIGHT, CHUNK_VOXELS_SIZE, Chunk, DebugViewMode, chunk_world_height,
+    chunk_world_origin,
+};
 
 #[derive(Component)]
 pub struct ChunkMesh;
@@ -79,12 +82,9 @@ fn setup_lighting(mut commands: Commands) {
     });
 }
 
-fn setup_chunk_material(
-    mut commands: Commands,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
+fn setup_chunk_material(mut commands: Commands, mut materials: ResMut<Assets<StandardMaterial>>) {
     let material = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.5, 0.8, 0.3),
+        base_color: Color::WHITE,
         metallic: 0.0,
         perceptual_roughness: 0.9,
         reflectance: 0.08,
@@ -195,7 +195,8 @@ fn process_chunk_render_builds(
     debug_view_mode: Res<DebugViewMode>,
 ) {
     for (entity, mut pending_mesh, chunk) in chunk_query.iter_mut() {
-        let Some((revision, mesh)) = future::block_on(future::poll_once(&mut pending_mesh.0)) else {
+        let Some((revision, mesh)) = future::block_on(future::poll_once(&mut pending_mesh.0))
+        else {
             continue;
         };
 
@@ -271,7 +272,8 @@ fn voxel_highlight_system(
     chunk_query: Query<&crate::world::Chunk>,
     world: Res<crate::world::World>,
 ) {
-    let Ok((mut highlight_transform, mut highlight_visibility)) = highlight_query.single_mut() else {
+    let Ok((mut highlight_transform, mut highlight_visibility)) = highlight_query.single_mut()
+    else {
         return;
     };
 
@@ -333,15 +335,18 @@ fn debug_aabb_system(
         if debug_state.enabled {
             for chunk_entity in chunk_query.iter() {
                 let has_debug_aabb = if let Ok(children) = children_query.get(chunk_entity) {
-                    children.iter().any(|child| {
-                        debug_query.get(child).is_ok()
-                    })
+                    children.iter().any(|child| debug_query.get(child).is_ok())
                 } else {
                     false
                 };
 
                 if !has_debug_aabb {
-                    create_debug_aabb_for_chunk(&mut commands, &mut meshes, &mut materials, chunk_entity);
+                    create_debug_aabb_for_chunk(
+                        &mut commands,
+                        &mut meshes,
+                        &mut materials,
+                        chunk_entity,
+                    );
                 }
             }
         } else {
@@ -382,10 +387,7 @@ fn create_debug_aabb_for_chunk(
     let normals = vec![[0.0, 1.0, 0.0]; 8];
     let uvs = vec![[0.0, 0.0]; 8];
 
-    let mut mesh = Mesh::new(
-        PrimitiveTopology::LineList,
-        RenderAssetUsages::RENDER_WORLD,
-    );
+    let mut mesh = Mesh::new(PrimitiveTopology::LineList, RenderAssetUsages::RENDER_WORLD);
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vertices);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
@@ -420,6 +422,7 @@ fn generate_chunk_mesh(chunk: &Chunk) -> Option<Mesh> {
     let mut indices = Vec::new();
     let mut normals = Vec::new();
     let mut uvs = Vec::new();
+    let mut colors = Vec::new();
 
     for x in 0..CHUNK_VOXELS_SIZE {
         for y in 0..CHUNK_VOXELS_HEIGHT {
@@ -437,7 +440,9 @@ fn generate_chunk_mesh(chunk: &Chunk) -> Option<Mesh> {
                             &mut indices,
                             &mut normals,
                             &mut uvs,
+                            &mut colors,
                             local_pos,
+                            voxel.voxel_type,
                             chunk,
                             x,
                             y,
@@ -472,8 +477,10 @@ fn generate_chunk_mesh(chunk: &Chunk) -> Option<Mesh> {
 
     let mut extended_normals = normals;
     let mut extended_uvs = uvs;
+    let mut extended_colors = colors;
     extended_normals.extend_from_slice(&[[0.0, 1.0, 0.0]; 8]);
     extended_uvs.extend_from_slice(&[[0.0, 0.0]; 8]);
+    extended_colors.extend_from_slice(&[[1.0, 1.0, 1.0, 1.0]; 8]);
 
     let mut extended_indices = indices;
     for i in 0..8 {
@@ -489,6 +496,7 @@ fn generate_chunk_mesh(chunk: &Chunk) -> Option<Mesh> {
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, extended_vertices);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, extended_normals);
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, extended_uvs);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, extended_colors);
     mesh.insert_indices(Indices::U32(extended_indices));
 
     Some(mesh)
@@ -499,7 +507,9 @@ fn add_voxel_faces(
     indices: &mut Vec<u32>,
     normals: &mut Vec<[f32; 3]>,
     uvs: &mut Vec<[f32; 2]>,
+    colors: &mut Vec<[f32; 4]>,
     pos: Vec3,
+    voxel_type: VoxelType,
     chunk: &Chunk,
     x: usize,
     y: usize,
@@ -534,7 +544,9 @@ fn add_voxel_faces(
 
     for (should_render, face) in faces.iter() {
         if *should_render {
-            add_face(vertices, indices, normals, uvs, pos, *face);
+            add_face(
+                vertices, indices, normals, uvs, colors, pos, *face, voxel_type,
+            );
         }
     }
 }
@@ -574,16 +586,21 @@ fn add_face(
     indices: &mut Vec<u32>,
     normals: &mut Vec<[f32; 3]>,
     uvs: &mut Vec<[f32; 2]>,
+    colors: &mut Vec<[f32; 4]>,
     pos: Vec3,
     face: VoxelFace,
+    voxel_type: VoxelType,
 ) {
     let start_vertex = vertices.len() as u32;
     let face_vertices = face.get_vertices(pos, VOXEL_SIZE);
     let face_normal = face.get_normal();
+    let linear = voxel_type.color().to_linear();
+    let color = [linear.red, linear.green, linear.blue, linear.alpha];
 
     vertices.extend_from_slice(&face_vertices);
     normals.extend_from_slice(&[[face_normal.x, face_normal.y, face_normal.z]; 4]);
     uvs.extend_from_slice(&[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
+    colors.extend_from_slice(&[color; 4]);
 
     indices.extend_from_slice(&[
         start_vertex,
@@ -594,4 +611,3 @@ fn add_face(
         start_vertex + 3,
     ]);
 }
-

@@ -1,6 +1,8 @@
 pub const VOXELS_PER_METER: f32 = 16.0;
 pub const VOXEL_SIZE: f32 = 1.0 / VOXELS_PER_METER;
 
+use bevy::prelude::Color;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum VoxelFace {
     NegativeX = 0,
@@ -23,7 +25,7 @@ impl VoxelFace {
             VoxelFace::PositiveZ => Vec3::new(0.0, 0.0, 1.0),
         }
     }
-    
+
     pub fn get_offset(&self) -> (i32, i32, i32) {
         match self {
             VoxelFace::NegativeX => (-1, 0, 0),
@@ -34,10 +36,10 @@ impl VoxelFace {
             VoxelFace::PositiveZ => (0, 0, 1),
         }
     }
-    
+
     pub fn from_normal(normal: bevy::prelude::Vec3) -> Option<Self> {
         const EPSILON: f32 = 0.5;
-        
+
         if normal.x < -EPSILON {
             Some(VoxelFace::NegativeX)
         } else if normal.x > EPSILON {
@@ -54,7 +56,7 @@ impl VoxelFace {
             None
         }
     }
-    
+
     pub fn get_vertices(&self, pos: bevy::prelude::Vec3, size: f32) -> [[f32; 3]; 4] {
         use bevy::prelude::Vec3;
         let Vec3 { x, y, z } = pos;
@@ -121,6 +123,15 @@ impl VoxelType {
             _ => true,
         }
     }
+
+    pub fn color(&self) -> Color {
+        match self {
+            VoxelType::Air => Color::NONE,
+            VoxelType::Stone => Color::srgb(0.45, 0.47, 0.50),
+            VoxelType::Dirt => Color::srgb(0.45, 0.31, 0.20),
+            VoxelType::Grass => Color::srgb(0.34, 0.62, 0.24),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -140,7 +151,7 @@ impl Voxel {
     pub fn new(voxel_type: VoxelType) -> Self {
         Self { voxel_type }
     }
-    
+
     pub fn is_solid(&self) -> bool {
         self.voxel_type.is_solid()
     }

@@ -1,10 +1,10 @@
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
-use bevy::tasks::{futures_lite::future, AsyncComputeTaskPool, Task};
+use bevy::tasks::{AsyncComputeTaskPool, Task, futures_lite::future};
 
-use crate::voxel::{Voxel, VOXEL_SIZE};
-use crate::terrain::TerrainGenerator;
-use crate::player::{spawn_player, Player};
+use crate::player::{Player, spawn_player};
+use crate::terrain::{TERRAIN_MAX_HEIGHT_METERS, TerrainGenerator};
+use crate::voxel::{VOXEL_SIZE, Voxel};
 
 pub const CHUNK_SIZE: usize = 32;
 pub const CHUNK_HEIGHT: usize = 256;
@@ -13,6 +13,7 @@ pub const INITIAL_LOAD_RADIUS_CHUNKS: i32 = 3;
 
 pub const CHUNK_VOXELS_SIZE: usize = CHUNK_SIZE;
 pub const CHUNK_VOXELS_HEIGHT: usize = CHUNK_HEIGHT;
+const PLAYER_SPAWN_CLEARANCE_METERS: f32 = 3.0;
 
 pub fn chunk_world_size() -> f32 {
     CHUNK_VOXELS_SIZE as f32 * VOXEL_SIZE
@@ -35,7 +36,11 @@ pub fn render_distance_chunks() -> i32 {
 }
 
 pub fn initial_player_spawn_position() -> Vec3 {
-    Vec3::new(8.0, chunk_world_height() + 2.0, 8.0)
+    Vec3::new(
+        chunk_world_size() * 0.25,
+        TERRAIN_MAX_HEIGHT_METERS + PLAYER_SPAWN_CLEARANCE_METERS,
+        chunk_world_size() * 0.25,
+    )
 }
 
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -54,7 +59,7 @@ impl ChunkCoord {
     pub fn new(x: i32, z: i32) -> Self {
         Self { x, z }
     }
-    
+
     pub fn from_world_pos(world_pos: Vec3) -> Self {
         let chunk_size_world = chunk_world_size();
         Self {
@@ -75,7 +80,10 @@ impl Chunk {
     pub fn new(coord: ChunkCoord) -> Self {
         Self {
             coord,
-            voxels: vec![Voxel::default(); CHUNK_VOXELS_SIZE * CHUNK_VOXELS_HEIGHT * CHUNK_VOXELS_SIZE],
+            voxels: vec![
+                Voxel::default();
+                CHUNK_VOXELS_SIZE * CHUNK_VOXELS_HEIGHT * CHUNK_VOXELS_SIZE
+            ],
             revision: 0,
         }
     }
@@ -139,36 +147,41 @@ impl World {
     /// Converts world coordinates to chunk coordinates and voxel indices.
     pub fn world_to_voxel(&self, world_pos: Vec3) -> Option<(ChunkCoord, usize, usize, usize)> {
         let chunk_coord = ChunkCoord::from_world_pos(world_pos);
-        
+
         if !self.chunks.contains_key(&chunk_coord) {
             return None;
         }
-        
+
         let chunk_origin = chunk_world_origin(chunk_coord);
-        
+
         let local_x = world_pos.x - chunk_origin.x;
         let local_y = world_pos.y;
         let local_z = world_pos.z - chunk_origin.z;
-        
+
         if local_x < 0.0 || local_y < 0.0 || local_z < 0.0 {
             return None;
         }
-        
+
         let voxel_x = (local_x / VOXEL_SIZE).floor() as usize;
         let voxel_y = (local_y / VOXEL_SIZE).floor() as usize;
         let voxel_z = (local_z / VOXEL_SIZE).floor() as usize;
-        
-        if voxel_x < CHUNK_VOXELS_SIZE && 
-           voxel_y < CHUNK_VOXELS_HEIGHT && 
-           voxel_z < CHUNK_VOXELS_SIZE {
+
+        if voxel_x < CHUNK_VOXELS_SIZE
+            && voxel_y < CHUNK_VOXELS_HEIGHT
+            && voxel_z < CHUNK_VOXELS_SIZE
+        {
             Some((chunk_coord, voxel_x, voxel_y, voxel_z))
         } else {
             None
         }
     }
-    
+
     /// Returns the voxel at a world position.
-    pub fn get_voxel_at_world(&self, world_pos: Vec3, chunk_query: &Query<&Chunk>) -> Option<Voxel> {
+    pub fn get_voxel_at_world(
+        &self,
+        world_pos: Vec3,
+        chunk_query: &Query<&Chunk>,
+    ) -> Option<Voxel> {
         if let Some((chunk_coord, x, y, z)) = self.world_to_voxel(world_pos) {
             if let Some(chunk_entity) = self.chunks.get(&chunk_coord) {
                 if let Ok(chunk) = chunk_query.get(*chunk_entity) {
@@ -178,13 +191,13 @@ impl World {
         }
         None
     }
-    
+
     /// Sets the voxel at a world position.
     pub fn set_voxel_at_world(
-        &self, 
-        world_pos: Vec3, 
+        &self,
+        world_pos: Vec3,
         voxel: Voxel,
-        chunk_query: &mut Query<&mut Chunk>
+        chunk_query: &mut Query<&mut Chunk>,
     ) -> bool {
         if let Some((chunk_coord, x, y, z)) = self.world_to_voxel(world_pos) {
             if let Some(chunk_entity) = self.chunks.get(&chunk_coord) {
@@ -196,7 +209,6 @@ impl World {
         }
         false
     }
-    
 }
 
 #[derive(Resource)]
@@ -214,8 +226,7 @@ pub struct WorldPlugin;
 
 impl Plugin for WorldPlugin {
     fn build(&self, app: &mut App) {
-        app
-            .init_resource::<World>()
+        app.init_resource::<World>()
             .init_resource::<DebugAabbState>()
             .init_resource::<DebugViewMode>()
             .init_resource::<InitialWorldGeneration>()
@@ -263,8 +274,12 @@ fn start_initial_world_generation(mut generation_state: ResMut<InitialWorldGener
         let terrain_generator = TerrainGenerator::new();
         let mut chunks = Vec::new();
 
-        for x in (spawn_chunk.x - INITIAL_LOAD_RADIUS_CHUNKS)..=(spawn_chunk.x + INITIAL_LOAD_RADIUS_CHUNKS) {
-            for z in (spawn_chunk.z - INITIAL_LOAD_RADIUS_CHUNKS)..=(spawn_chunk.z + INITIAL_LOAD_RADIUS_CHUNKS) {
+        for x in (spawn_chunk.x - INITIAL_LOAD_RADIUS_CHUNKS)
+            ..=(spawn_chunk.x + INITIAL_LOAD_RADIUS_CHUNKS)
+        {
+            for z in (spawn_chunk.z - INITIAL_LOAD_RADIUS_CHUNKS)
+                ..=(spawn_chunk.z + INITIAL_LOAD_RADIUS_CHUNKS)
+            {
                 let dx = x - spawn_chunk.x;
                 let dz = z - spawn_chunk.z;
                 if dx * dx + dz * dz > INITIAL_LOAD_RADIUS_CHUNKS * INITIAL_LOAD_RADIUS_CHUNKS {
@@ -350,10 +365,7 @@ fn complete_pending_chunk_generation_system(
     }
 }
 
-fn chunk_loading_system(
-    mut world: ResMut<World>,
-    player_query: Query<&Transform, With<Player>>,
-) {
+fn chunk_loading_system(mut world: ResMut<World>, player_query: Query<&Transform, With<Player>>) {
     if let Ok(player_transform) = player_query.single() {
         let player_chunk = ChunkCoord::from_world_pos(player_transform.translation);
         let render_distance = render_distance_chunks();
@@ -381,18 +393,19 @@ fn chunk_unloading_system(
     if let Ok(player_transform) = player_query.single() {
         let player_chunk = ChunkCoord::from_world_pos(player_transform.translation);
         let unload_distance = render_distance_chunks() + 2;
-        
+
         let mut chunks_to_unload = Vec::new();
-        
+
         for (&chunk_coord, &chunk_entity) in world.chunks.iter() {
             let distance_x = (chunk_coord.x - player_chunk.x).abs();
             let distance_z = (chunk_coord.z - player_chunk.z).abs();
-            
-            if distance_x * distance_x + distance_z * distance_z > unload_distance * unload_distance {
+
+            if distance_x * distance_x + distance_z * distance_z > unload_distance * unload_distance
+            {
                 chunks_to_unload.push((chunk_coord, chunk_entity));
             }
         }
-        
+
         for (coord, entity) in chunks_to_unload {
             commands.entity(entity).despawn();
             world.chunks.remove(&coord);
@@ -400,10 +413,7 @@ fn chunk_unloading_system(
     }
 }
 
-fn debug_state_system(
-    mut debug_state: ResMut<DebugAabbState>,
-    keys: Res<ButtonInput<KeyCode>>,
-) {
+fn debug_state_system(mut debug_state: ResMut<DebugAabbState>, keys: Res<ButtonInput<KeyCode>>) {
     if keys.just_pressed(KeyCode::F1) {
         debug_state.enabled = !debug_state.enabled;
     }
