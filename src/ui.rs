@@ -1,4 +1,5 @@
 use crate::player::{Player, PlayerInteraction};
+use crate::voxel::VoxelType;
 use crate::world::InitialWorldGeneration;
 use bevy::prelude::*;
 
@@ -16,6 +17,9 @@ struct PlayerInfoText;
 
 #[derive(Component)]
 struct SelectedBlockText;
+
+#[derive(Component)]
+struct SelectedMaterialText;
 
 #[derive(Component)]
 struct LoadingText;
@@ -60,6 +64,20 @@ fn setup_ui(mut commands: Commands) {
                 },
             ));
 
+            parent.spawn((
+                Text::new("Material: Stone [1 Grass, 2 Dirt, 3 Stone]"),
+                TextFont {
+                    font_size: 18.0,
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+                SelectedMaterialText,
+                Node {
+                    margin: UiRect::top(Val::Px(5.0)),
+                    ..default()
+                },
+            ));
+
             parent
                 .spawn((
                     Node {
@@ -74,12 +92,13 @@ fn setup_ui(mut commands: Commands) {
                         "Controls:",
                         "Left Click: Break Block",
                         "Right Click: Place Block",
+                        "1/2/3: Select Grass/Dirt/Stone",
                         "Shift: Sprint",
                         "F1: Toggle AABB Debug",
                         "F2: Toggle Render Wireframe",
                         "F3: Toggle Physics Wireframe",
                     ];
-                    
+
                     for control_text in controls {
                         parent.spawn((
                             Text::new(control_text),
@@ -128,6 +147,7 @@ fn update_ui_text(
     mut commands: Commands,
     mut player_info_query: Query<&mut Text, (With<PlayerInfoText>, Without<SelectedBlockText>)>,
     mut selected_block_query: Query<&mut Text, (With<SelectedBlockText>, Without<PlayerInfoText>)>,
+    mut selected_material_query: Query<&mut Text, With<SelectedMaterialText>>,
 ) {
     if generation_state.finished {
         if let Ok(entity) = loading_root_query.single() {
@@ -139,10 +159,7 @@ fn update_ui_text(
     if let Ok(player_transform) = player_query.single() {
         if let Ok(mut text) = player_info_query.single_mut() {
             let pos = player_transform.translation;
-            **text = format!(
-                "Position: ({:.1}, {:.1}, {:.1})",
-                pos.x, pos.y, pos.z
-            );
+            **text = format!("Position: ({:.1}, {:.1}, {:.1})", pos.x, pos.y, pos.z);
         }
     }
 
@@ -151,14 +168,20 @@ fn update_ui_text(
             if let Some((chunk_coord, x, y, z)) = world.world_to_voxel(selected_pos) {
                 let mut info = format!(
                     "Selected: Chunk({}, {}) Voxel({}, {}, {})\nWorld Pos: ({:.1}, {:.1}, {:.1})",
-                    chunk_coord.x, chunk_coord.z, x, y, z,
-                    selected_pos.x, selected_pos.y, selected_pos.z
+                    chunk_coord.x,
+                    chunk_coord.z,
+                    x,
+                    y,
+                    z,
+                    selected_pos.x,
+                    selected_pos.y,
+                    selected_pos.z
                 );
-                
+
                 if let Some(face) = interaction.hit_face {
                     info.push_str(&format!("\nHit Face: {:?}", face));
                 }
-                
+
                 **text = info;
             } else {
                 **text = "Selected: None".to_string();
@@ -166,5 +189,15 @@ fn update_ui_text(
         } else {
             **text = "Selected: None".to_string();
         }
+    }
+
+    if let Ok(mut text) = selected_material_query.single_mut() {
+        let material_name = match interaction.selected_material {
+            VoxelType::Grass => "Grass",
+            VoxelType::Dirt => "Dirt",
+            VoxelType::Stone => "Stone",
+            VoxelType::Air => "Air",
+        };
+        **text = format!("Material: {material_name} [1 Grass, 2 Dirt, 3 Stone]");
     }
 }

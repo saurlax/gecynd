@@ -1,7 +1,7 @@
-use crate::voxel::{VOXEL_SIZE, Voxel, VoxelType, VoxelFace};
-use crate::world::{initial_player_spawn_position, InitialWorldGeneration, World};
-use bevy::platform::collections::HashSet;
+use crate::voxel::{VOXEL_SIZE, Voxel, VoxelFace, VoxelType};
+use crate::world::{InitialWorldGeneration, World, initial_player_spawn_position};
 use bevy::input::mouse::MouseMotion;
+use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
 use bevy::time::Fixed;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow, WindowFocused};
@@ -30,6 +30,7 @@ pub struct PlayerInteraction {
     pub selected_voxel_world_pos: Option<Vec3>,
     pub hit_face: Option<VoxelFace>,
     pub interaction_range: f32,
+    pub selected_material: VoxelType,
 }
 
 impl Default for PlayerInteraction {
@@ -38,6 +39,7 @@ impl Default for PlayerInteraction {
             selected_voxel_world_pos: None,
             hit_face: None,
             interaction_range: 10.0,
+            selected_material: VoxelType::Stone,
         }
     }
 }
@@ -89,11 +91,15 @@ impl Plugin for PlayerPlugin {
                 Update,
                 (
                     player_look,
+                    material_selection_input,
                     voxel_interaction,
                     voxel_selection,
                 ),
             );
-        app.add_systems(FixedUpdate, (player_movement, player_unstuck.after(player_movement)));
+        app.add_systems(
+            FixedUpdate,
+            (player_movement, player_unstuck.after(player_movement)),
+        );
     }
 }
 
@@ -133,18 +139,22 @@ pub fn spawn_player(commands: &mut Commands) {
 
 fn player_movement(
     keyboard_input: Res<ButtonInput<KeyCode>>,
-    mut player_query: Query<(
-        &mut KinematicCharacterController,
-        &Transform,
-        Option<&KinematicCharacterControllerOutput>,
-        &mut PlayerMotor,
-    ), With<Player>>,
+    mut player_query: Query<
+        (
+            &mut KinematicCharacterController,
+            &Transform,
+            Option<&KinematicCharacterControllerOutput>,
+            &mut PlayerMotor,
+        ),
+        With<Player>,
+    >,
     time: Res<Time<Fixed>>,
 ) {
-    if let Ok((mut controller, transform, controller_output, mut motor)) = player_query.single_mut() {
+    if let Ok((mut controller, transform, controller_output, mut motor)) = player_query.single_mut()
+    {
         let mut movement = Vec3::ZERO;
         let mut speed = PLAYER_WALK_SPEED;
-        
+
         if keyboard_input.pressed(KeyCode::ShiftLeft) {
             speed *= PLAYER_SPRINT_MULTIPLIER;
         }
@@ -306,9 +316,7 @@ fn sync_cursor_with_window_focus(
     }
 }
 
-fn setup_cursor_grab(
-    mut window_cursor_query: Query<&mut CursorOptions, With<PrimaryWindow>>,
-) {
+fn setup_cursor_grab(mut window_cursor_query: Query<&mut CursorOptions, With<PrimaryWindow>>) {
     if let Ok(mut cursor_options) = window_cursor_query.single_mut() {
         release_cursor(&mut cursor_options);
     }
@@ -442,6 +450,19 @@ fn voxel_selection(
     }
 }
 
+fn material_selection_input(
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut interaction: ResMut<PlayerInteraction>,
+) {
+    if keyboard_input.just_pressed(KeyCode::Digit1) {
+        interaction.selected_material = VoxelType::Grass;
+    } else if keyboard_input.just_pressed(KeyCode::Digit2) {
+        interaction.selected_material = VoxelType::Dirt;
+    } else if keyboard_input.just_pressed(KeyCode::Digit3) {
+        interaction.selected_material = VoxelType::Stone;
+    }
+}
+
 fn calculate_placement_position(voxel_center: Vec3, face: VoxelFace) -> Vec3 {
     let (dx, dy, dz) = face.get_offset();
     voxel_center + Vec3::new(dx as f32, dy as f32, dz as f32) * VOXEL_SIZE
@@ -453,10 +474,7 @@ fn voxel_interaction(
     interaction: Res<PlayerInteraction>,
     mouse_input: Res<ButtonInput<MouseButton>>,
     cursor_query: Query<&CursorOptions, With<PrimaryWindow>>,
-    mut chunk_query_set: ParamSet<(
-        Query<&crate::world::Chunk>,
-        Query<&mut crate::world::Chunk>,
-    )>,
+    mut chunk_query_set: ParamSet<(Query<&crate::world::Chunk>, Query<&mut crate::world::Chunk>)>,
     player_query: Query<&Transform, With<Player>>,
     time: Res<Time>,
     mut placement_cooldown: ResMut<PlacementCooldown>,
@@ -469,11 +487,15 @@ fn voxel_interaction(
 
     if let Some(selected_voxel_pos) = interaction.selected_voxel_world_pos {
         if mouse_input.just_pressed(MouseButton::Left) {
-            if world.set_voxel_at_world(selected_voxel_pos, Voxel::new(VoxelType::Air), &mut chunk_query_set.p1()) {
+            if world.set_voxel_at_world(
+                selected_voxel_pos,
+                Voxel::new(VoxelType::Air),
+                &mut chunk_query_set.p1(),
+            ) {
                 mark_chunk_for_update(&mut commands, &world, selected_voxel_pos);
             }
         }
-        
+
         if mouse_input.pressed(MouseButton::Right) {
             let current_time = time.elapsed_secs();
 
@@ -488,18 +510,28 @@ fn voxel_interaction(
                         let voxel_min = place_pos - Vec3::splat(VOXEL_SIZE / 2.0);
                         let voxel_max = place_pos + Vec3::splat(VOXEL_SIZE / 2.0);
 
-                        let overlaps = player_min.x < voxel_max.x && player_max.x > voxel_min.x &&
-                                      player_min.y < voxel_max.y && player_max.y > voxel_min.y &&
-                                      player_min.z < voxel_max.z && player_max.z > voxel_min.z;
+                        let overlaps = player_min.x < voxel_max.x
+                            && player_max.x > voxel_min.x
+                            && player_min.y < voxel_max.y
+                            && player_max.y > voxel_min.y
+                            && player_min.z < voxel_max.z
+                            && player_max.z > voxel_min.z;
 
                         if overlaps {
                             return;
                         }
                     }
 
-                    if let Some(existing_voxel) = world.get_voxel_at_world(place_pos, &chunk_query_set.p0()) {
+                    if let Some(existing_voxel) =
+                        world.get_voxel_at_world(place_pos, &chunk_query_set.p0())
+                    {
                         if !existing_voxel.is_solid() {
-                            if world.set_voxel_at_world(place_pos, Voxel::new(VoxelType::Stone), &mut chunk_query_set.p1()) {
+                            let selected_material = interaction.selected_material;
+                            if world.set_voxel_at_world(
+                                place_pos,
+                                Voxel::new(selected_material),
+                                &mut chunk_query_set.p1(),
+                            ) {
                                 mark_chunk_for_update(&mut commands, &world, place_pos);
                                 placement_cooldown.last_place_time = current_time;
                             }
@@ -516,16 +548,28 @@ fn mark_chunk_for_update(commands: &mut Commands, world: &World, world_pos: Vec3
         let mut dirty_chunks = HashSet::from([chunk_coord]);
 
         if voxel_x == 0 {
-            dirty_chunks.insert(crate::world::ChunkCoord::new(chunk_coord.x - 1, chunk_coord.z));
+            dirty_chunks.insert(crate::world::ChunkCoord::new(
+                chunk_coord.x - 1,
+                chunk_coord.z,
+            ));
         }
         if voxel_x + 1 == crate::world::CHUNK_VOXELS_SIZE {
-            dirty_chunks.insert(crate::world::ChunkCoord::new(chunk_coord.x + 1, chunk_coord.z));
+            dirty_chunks.insert(crate::world::ChunkCoord::new(
+                chunk_coord.x + 1,
+                chunk_coord.z,
+            ));
         }
         if voxel_z == 0 {
-            dirty_chunks.insert(crate::world::ChunkCoord::new(chunk_coord.x, chunk_coord.z - 1));
+            dirty_chunks.insert(crate::world::ChunkCoord::new(
+                chunk_coord.x,
+                chunk_coord.z - 1,
+            ));
         }
         if voxel_z + 1 == crate::world::CHUNK_VOXELS_SIZE {
-            dirty_chunks.insert(crate::world::ChunkCoord::new(chunk_coord.x, chunk_coord.z + 1));
+            dirty_chunks.insert(crate::world::ChunkCoord::new(
+                chunk_coord.x,
+                chunk_coord.z + 1,
+            ));
         }
 
         for dirty_chunk in dirty_chunks {
