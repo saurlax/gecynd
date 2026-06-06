@@ -164,10 +164,12 @@ fn update_ui_text(
     generation_state: Res<InitialWorldGeneration>,
     loading_root_query: Query<Entity, With<LoadingRoot>>,
     mut commands: Commands,
-    mut player_info_query: Query<&mut Text, (With<PlayerInfoText>, Without<SelectedBlockText>)>,
-    mut selected_block_query: Query<&mut Text, (With<SelectedBlockText>, Without<PlayerInfoText>)>,
-    mut selected_material_query: Query<&mut Text, With<SelectedMaterialText>>,
-    mut brush_settings_query: Query<&mut Text, With<BrushSettingsText>>,
+    mut text_queries: ParamSet<(
+        Query<&mut Text, With<PlayerInfoText>>,
+        Query<&mut Text, With<SelectedBlockText>>,
+        Query<&mut Text, With<SelectedMaterialText>>,
+        Query<&mut Text, With<BrushSettingsText>>,
+    )>,
 ) {
     if generation_state.finished {
         if let Ok(entity) = loading_root_query.single() {
@@ -177,13 +179,13 @@ fn update_ui_text(
     }
 
     if let Ok(player_transform) = player_query.single() {
-        if let Ok(mut text) = player_info_query.single_mut() {
+        if let Ok(mut text) = text_queries.p0().single_mut() {
             let pos = player_transform.translation;
             **text = format!("Position: ({:.1}, {:.1}, {:.1})", pos.x, pos.y, pos.z);
         }
     }
 
-    if let Ok(mut text) = selected_block_query.single_mut() {
+    if let Ok(mut text) = text_queries.p1().single_mut() {
         if let Some(selected_pos) = interaction.selected_voxel_world_pos {
             if let Some((chunk_coord, x, y, z)) = world.world_to_voxel(selected_pos) {
                 let mut info = format!(
@@ -211,7 +213,7 @@ fn update_ui_text(
         }
     }
 
-    if let Ok(mut text) = selected_material_query.single_mut() {
+    if let Ok(mut text) = text_queries.p2().single_mut() {
         let material_name = match interaction.selected_material {
             VoxelType::Grass => "Grass",
             VoxelType::Dirt => "Dirt",
@@ -221,7 +223,7 @@ fn update_ui_text(
         **text = format!("Material: {material_name} [1 Grass, 2 Dirt, 3 Stone]");
     }
 
-    if let Ok(mut text) = brush_settings_query.single_mut() {
+    if let Ok(mut text) = text_queries.p3().single_mut() {
         let brush_name = match interaction.brush_shape {
             BrushShape::Single => "Single",
             BrushShape::Square => "Square",
