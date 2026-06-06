@@ -1,7 +1,7 @@
 use crate::voxel::{VOXEL_SIZE, VoxelFace};
-use crate::world::{Chunk, DebugViewMode, CHUNK_VOXELS_HEIGHT, CHUNK_VOXELS_SIZE};
+use crate::world::{CHUNK_VOXELS_HEIGHT, CHUNK_VOXELS_SIZE, Chunk, DebugViewMode};
 use bevy::prelude::*;
-use bevy::tasks::{futures_lite::future, AsyncComputeTaskPool, Task};
+use bevy::tasks::{AsyncComputeTaskPool, Task, futures_lite::future};
 use bevy_rapier3d::prelude::*;
 
 #[derive(Component)]
@@ -46,8 +46,7 @@ fn queue_chunk_physics_builds(
     for (entity, chunk) in chunk_query.iter() {
         let chunk = chunk.clone();
         let revision = chunk.revision;
-        let task =
-            task_pool.spawn(async move { (revision, generate_chunk_collider(&chunk)) });
+        let task = task_pool.spawn(async move { (revision, generate_chunk_collider(&chunk)) });
         commands.entity(entity).insert(PendingPhysicsCollider(task));
     }
 }
@@ -57,7 +56,9 @@ fn process_chunk_physics_builds(
     mut chunk_query: Query<(Entity, &mut PendingPhysicsCollider, &Chunk)>,
 ) {
     for (entity, mut pending_collider, chunk) in chunk_query.iter_mut() {
-        let Some((revision, collider)) = future::block_on(future::poll_once(&mut pending_collider.0)) else {
+        let Some((revision, collider)) =
+            future::block_on(future::poll_once(&mut pending_collider.0))
+        else {
             continue;
         };
 
@@ -129,12 +130,30 @@ fn add_voxel_geometry(
     z: usize,
 ) {
     let faces = [
-        (should_render_face_physics(chunk, x, y, z, -1, 0, 0), VoxelFace::NegativeX),
-        (should_render_face_physics(chunk, x, y, z, 1, 0, 0), VoxelFace::PositiveX),
-        (should_render_face_physics(chunk, x, y, z, 0, -1, 0), VoxelFace::NegativeY),
-        (should_render_face_physics(chunk, x, y, z, 0, 1, 0), VoxelFace::PositiveY),
-        (should_render_face_physics(chunk, x, y, z, 0, 0, -1), VoxelFace::NegativeZ),
-        (should_render_face_physics(chunk, x, y, z, 0, 0, 1), VoxelFace::PositiveZ),
+        (
+            should_render_face_physics(chunk, x, y, z, -1, 0, 0),
+            VoxelFace::NegativeX,
+        ),
+        (
+            should_render_face_physics(chunk, x, y, z, 1, 0, 0),
+            VoxelFace::PositiveX,
+        ),
+        (
+            should_render_face_physics(chunk, x, y, z, 0, -1, 0),
+            VoxelFace::NegativeY,
+        ),
+        (
+            should_render_face_physics(chunk, x, y, z, 0, 1, 0),
+            VoxelFace::PositiveY,
+        ),
+        (
+            should_render_face_physics(chunk, x, y, z, 0, 0, -1),
+            VoxelFace::NegativeZ,
+        ),
+        (
+            should_render_face_physics(chunk, x, y, z, 0, 0, 1),
+            VoxelFace::PositiveZ,
+        ),
     ];
 
     for (should_render, face) in faces.iter() {
@@ -183,7 +202,7 @@ fn add_face_geometry(
 ) {
     let start_vertex = vertices.len() as u32;
     let face_vertices = face.get_vertices(pos, size);
-    
+
     for vertex in face_vertices.iter() {
         vertices.push(Vec3::new(vertex[0], vertex[1], vertex[2]));
     }
