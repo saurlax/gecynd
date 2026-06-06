@@ -1,4 +1,4 @@
-use crate::player::{Player, PlayerInteraction};
+use crate::player::{BrushShape, Player, PlayerInteraction};
 use crate::voxel::VoxelType;
 use crate::world::InitialWorldGeneration;
 use bevy::prelude::*;
@@ -20,6 +20,9 @@ struct SelectedBlockText;
 
 #[derive(Component)]
 struct SelectedMaterialText;
+
+#[derive(Component)]
+struct BrushSettingsText;
 
 #[derive(Component)]
 struct LoadingText;
@@ -78,6 +81,20 @@ fn setup_ui(mut commands: Commands) {
                 },
             ));
 
+            parent.spawn((
+                Text::new("Brush: Single | Size: 4 [4/5/6 shape, Z/X size]"),
+                TextFont {
+                    font_size: 18.0,
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+                BrushSettingsText,
+                Node {
+                    margin: UiRect::top(Val::Px(5.0)),
+                    ..default()
+                },
+            ));
+
             parent
                 .spawn((
                     Node {
@@ -93,6 +110,8 @@ fn setup_ui(mut commands: Commands) {
                         "Left Click: Break Block",
                         "Right Click: Place Block",
                         "1/2/3: Select Grass/Dirt/Stone",
+                        "4/5/6: Select Single/Square/Circle",
+                        "Z/X: Decrease/Increase Brush Size",
                         "Shift: Sprint",
                         "F1: Toggle AABB Debug",
                         "F2: Toggle Render Wireframe",
@@ -148,6 +167,7 @@ fn update_ui_text(
     mut player_info_query: Query<&mut Text, (With<PlayerInfoText>, Without<SelectedBlockText>)>,
     mut selected_block_query: Query<&mut Text, (With<SelectedBlockText>, Without<PlayerInfoText>)>,
     mut selected_material_query: Query<&mut Text, With<SelectedMaterialText>>,
+    mut brush_settings_query: Query<&mut Text, With<BrushSettingsText>>,
 ) {
     if generation_state.finished {
         if let Ok(entity) = loading_root_query.single() {
@@ -199,5 +219,17 @@ fn update_ui_text(
             VoxelType::Air => "Air",
         };
         **text = format!("Material: {material_name} [1 Grass, 2 Dirt, 3 Stone]");
+    }
+
+    if let Ok(mut text) = brush_settings_query.single_mut() {
+        let brush_name = match interaction.brush_shape {
+            BrushShape::Single => "Single",
+            BrushShape::Square => "Square",
+            BrushShape::Circle => "Circle",
+        };
+        **text = format!(
+            "Brush: {brush_name} | Size: {} [4/5/6 shape, Z/X size]",
+            interaction.brush_size
+        );
     }
 }

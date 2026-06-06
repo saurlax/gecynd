@@ -13,6 +13,8 @@ const PLAYER_GRAVITY: f32 = 25.0;
 const PLAYER_MAX_FALL_SPEED: f32 = 40.0;
 const PLAYER_JUMP_SPEED: f32 = 6.5;
 const PLAYER_STEP_HEIGHT: f32 = 0.5;
+const MIN_BRUSH_SIZE: i32 = 4;
+const MAX_BRUSH_SIZE: i32 = 16;
 
 #[derive(Component)]
 pub struct Player;
@@ -25,12 +27,21 @@ pub struct PlayerMotor {
     pub vertical_velocity: f32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BrushShape {
+    Single,
+    Square,
+    Circle,
+}
+
 #[derive(Resource)]
 pub struct PlayerInteraction {
     pub selected_voxel_world_pos: Option<Vec3>,
     pub hit_face: Option<VoxelFace>,
     pub interaction_range: f32,
     pub selected_material: VoxelType,
+    pub brush_shape: BrushShape,
+    pub brush_size: i32,
 }
 
 impl Default for PlayerInteraction {
@@ -40,6 +51,8 @@ impl Default for PlayerInteraction {
             hit_face: None,
             interaction_range: 10.0,
             selected_material: VoxelType::Stone,
+            brush_shape: BrushShape::Single,
+            brush_size: 4,
         }
     }
 }
@@ -92,6 +105,7 @@ impl Plugin for PlayerPlugin {
                 (
                     player_look,
                     material_selection_input,
+                    brush_selection_input,
                     voxel_interaction,
                     voxel_selection,
                 ),
@@ -463,9 +477,81 @@ fn material_selection_input(
     }
 }
 
+fn brush_selection_input(
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut interaction: ResMut<PlayerInteraction>,
+) {
+    if keyboard_input.just_pressed(KeyCode::Digit4) {
+        interaction.brush_shape = BrushShape::Single;
+    } else if keyboard_input.just_pressed(KeyCode::Digit5) {
+        interaction.brush_shape = BrushShape::Square;
+    } else if keyboard_input.just_pressed(KeyCode::Digit6) {
+        interaction.brush_shape = BrushShape::Circle;
+    }
+
+    if keyboard_input.just_pressed(KeyCode::KeyZ) {
+        interaction.brush_size = (interaction.brush_size - 1).clamp(MIN_BRUSH_SIZE, MAX_BRUSH_SIZE);
+    } else if keyboard_input.just_pressed(KeyCode::KeyX) {
+        interaction.brush_size = (interaction.brush_size + 1).clamp(MIN_BRUSH_SIZE, MAX_BRUSH_SIZE);
+    }
+}
+
 fn calculate_placement_position(voxel_center: Vec3, face: VoxelFace) -> Vec3 {
     let (dx, dy, dz) = face.get_offset();
     voxel_center + Vec3::new(dx as f32, dy as f32, dz as f32) * VOXEL_SIZE
+}
+
+fn build_brush_positions(
+    center: Vec3,
+    face: VoxelFace,
+    brush_shape: BrushShape,
+    brush_size: i32,
+) -> Vec<Vec3> {
+    if brush_shape == BrushShape::Single {
+        return vec![center];
+    }
+
+    let mut positions = Vec::new();
+    let start = -(brush_size / 2);
+    let end = start + brush_size - 1;
+    let center_bias = if brush_size % 2 == 0 { 0.5 } else { 0.0 };
+    let radius = brush_size as f32 * 0.5;
+
+    for a in start..=end {
+        for b in start..=end {
+            if brush_shape == BrushShape::Circle {
+                let sample_a = a as f32 + center_bias;
+                let sample_b = b as f32 + center_bias;
+                if sample_a * sample_a + sample_b * sample_b > radius * radius {
+                    continue;
+                }
+            }
+
+            let offset = match face {
+                VoxelFace::NegativeX | VoxelFace::PositiveX => Vec3::new(0.0, a as f32, b as f32),
+                VoxelFace::NegativeY | VoxelFace::PositiveY => Vec3::new(a as f32, 0.0, b as f32),
+                VoxelFace::NegativeZ | VoxelFace::PositiveZ => Vec3::new(a as f32, b as f32, 0.0),
+            } * VOXEL_SIZE;
+
+            positions.push(center + offset);
+        }
+    }
+
+    positions
+}
+
+fn player_overlaps_voxel(player_pos: Vec3, voxel_center: Vec3) -> bool {
+    let player_min = player_pos + Vec3::new(-0.25, 0.0, -0.25);
+    let player_max = player_pos + Vec3::new(0.25, 2.0, 0.25);
+    let voxel_min = voxel_center - Vec3::splat(VOXEL_SIZE / 2.0);
+    let voxel_max = voxel_center + Vec3::splat(VOXEL_SIZE / 2.0);
+
+    player_min.x < voxel_max.x
+        && player_max.x > voxel_min.x
+        && player_min.y < voxel_max.y
+        && player_max.y > voxel_min.y
+        && player_min.z < voxel_max.z
+        && player_max.z > voxel_min.z
 }
 
 fn voxel_interaction(
@@ -487,12 +573,22 @@ fn voxel_interaction(
 
     if let Some(selected_voxel_pos) = interaction.selected_voxel_world_pos {
         if mouse_input.just_pressed(MouseButton::Left) {
-            if world.set_voxel_at_world(
+            let hit_face = interaction.hit_face.unwrap_or(VoxelFace::PositiveY);
+            let target_positions = build_brush_positions(
                 selected_voxel_pos,
-                Voxel::new(VoxelType::Air),
-                &mut chunk_query_set.p1(),
-            ) {
-                mark_chunk_for_update(&mut commands, &world, selected_voxel_pos);
+                hit_face,
+                interaction.brush_shape,
+                interaction.brush_size,
+            );
+
+            for target_pos in target_positions {
+                if world.set_voxel_at_world(
+                    target_pos,
+                    Voxel::new(VoxelType::Air),
+                    &mut chunk_query_set.p1(),
+                ) {
+                    mark_chunk_for_update(&mut commands, &world, target_pos);
+                }
             }
         }
 
@@ -502,40 +598,41 @@ fn voxel_interaction(
             if current_time - placement_cooldown.last_place_time > 0.1 {
                 if let Some(hit_face) = interaction.hit_face {
                     let place_pos = calculate_placement_position(selected_voxel_pos, hit_face);
+                    let target_positions = build_brush_positions(
+                        place_pos,
+                        hit_face,
+                        interaction.brush_shape,
+                        interaction.brush_size,
+                    );
+                    let mut placed_any = false;
 
                     if let Ok(player_transform) = player_query.single() {
                         let player_pos = player_transform.translation;
-                        let player_min = player_pos + Vec3::new(-0.25, 0.0, -0.25);
-                        let player_max = player_pos + Vec3::new(0.25, 2.0, 0.25);
-                        let voxel_min = place_pos - Vec3::splat(VOXEL_SIZE / 2.0);
-                        let voxel_max = place_pos + Vec3::splat(VOXEL_SIZE / 2.0);
+                        for target_pos in target_positions {
+                            if player_overlaps_voxel(player_pos, target_pos) {
+                                continue;
+                            }
 
-                        let overlaps = player_min.x < voxel_max.x
-                            && player_max.x > voxel_min.x
-                            && player_min.y < voxel_max.y
-                            && player_max.y > voxel_min.y
-                            && player_min.z < voxel_max.z
-                            && player_max.z > voxel_min.z;
-
-                        if overlaps {
-                            return;
+                            if let Some(existing_voxel) =
+                                world.get_voxel_at_world(target_pos, &chunk_query_set.p0())
+                            {
+                                if !existing_voxel.is_solid() {
+                                    let selected_material = interaction.selected_material;
+                                    if world.set_voxel_at_world(
+                                        target_pos,
+                                        Voxel::new(selected_material),
+                                        &mut chunk_query_set.p1(),
+                                    ) {
+                                        mark_chunk_for_update(&mut commands, &world, target_pos);
+                                        placed_any = true;
+                                    }
+                                }
+                            }
                         }
                     }
 
-                    if let Some(existing_voxel) =
-                        world.get_voxel_at_world(place_pos, &chunk_query_set.p0())
-                    {
-                        if !existing_voxel.is_solid() {
-                            let selected_material = interaction.selected_material;
-                            if world.set_voxel_at_world(
-                                place_pos,
-                                Voxel::new(selected_material),
-                                &mut chunk_query_set.p1(),
-                            ) {
-                                mark_chunk_for_update(&mut commands, &world, place_pos);
-                                placement_cooldown.last_place_time = current_time;
-                            }
-                        }
+                    if placed_any {
+                        placement_cooldown.last_place_time = current_time;
                     }
                 }
             }
