@@ -1,0 +1,74 @@
+name: Rust Release Build
+
+on:
+  workflow_dispatch:
+  release:
+    types:
+      - published
+
+permissions:
+  contents: write
+
+env:
+  BINARY_NAME: gecynd
+
+jobs:
+  build:
+    name: Build ${{ matrix.asset_name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # - runner: ubuntu-latest
+          #   asset_name: linux-x86_64
+          #   archive_name: gecynd-linux-x86_64.tar.gz
+          #   binary_path: target/release/gecynd
+          - runner: windows-latest
+            asset_name: windows-x86_64
+            archive_name: gecynd-windows-x86_64.zip
+            binary_path: target/release/gecynd.exe
+          - runner: macos-latest
+            asset_name: macos
+            archive_name: gecynd-macos.tar.gz
+            binary_path: target/release/gecynd
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --locked --release
+
+      - name: Package archive on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Compress-Archive -Path "${{ matrix.binary_path }}" -DestinationPath "dist/${{ matrix.archive_name }}" -Force
+
+      - name: Package archive on Unix
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p dist
+          tar -czf "dist/${{ matrix.archive_name }}" -C target/release "${BINARY_NAME}"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.archive_name }}
+          path: dist/${{ matrix.archive_name }}
+          if-no-files-found: error
+
+      - name: Upload release asset
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/${{ matrix.archive_name }}
