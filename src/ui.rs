@@ -6,16 +6,17 @@ use crate::voxel::VoxelType;
 use crate::world::InitialWorldGeneration;
 use crate::AppState;
 
-const NORMAL_BUTTON: Color = Color::srgb(0.18, 0.20, 0.18);
-const HOVERED_BUTTON: Color = Color::srgb(0.28, 0.31, 0.28);
-const PRESSED_BUTTON: Color = Color::srgb(0.36, 0.46, 0.36);
-const DISABLED_BUTTON: Color = Color::srgb(0.12, 0.12, 0.12);
+const NORMAL_BUTTON: Color = Color::srgb(0.30, 0.30, 0.30);
+const HOVERED_BUTTON: Color = Color::srgb(0.42, 0.42, 0.42);
+const PRESSED_BUTTON: Color = Color::srgb(0.56, 0.56, 0.56);
+const DISABLED_BUTTON: Color = Color::srgb(0.16, 0.16, 0.16);
 
 pub struct UiPlugin;
 
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(OnEnter(AppState::MainMenu), setup_main_menu)
+        app.add_systems(Startup, setup_ui_camera)
+            .add_systems(OnEnter(AppState::MainMenu), setup_main_menu)
             .add_systems(OnExit(AppState::MainMenu), cleanup_main_menu)
             .add_systems(
                 Update,
@@ -26,6 +27,9 @@ impl Plugin for UiPlugin {
             .add_systems(Update, update_hud_text.run_if(in_state(AppState::InGame)));
     }
 }
+
+#[derive(Component)]
+struct UiCameraRoot;
 
 #[derive(Component)]
 struct MainMenuRoot;
@@ -62,6 +66,10 @@ enum MainMenuAction {
     LoadSave,
 }
 
+fn setup_ui_camera(mut commands: Commands) {
+    commands.spawn((Camera2d, UiCameraRoot));
+}
+
 fn setup_main_menu(mut commands: Commands, save_state: Res<SaveState>) {
     commands
         .spawn((
@@ -69,67 +77,49 @@ fn setup_main_menu(mut commands: Commands, save_state: Res<SaveState>) {
             Node {
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
+                flex_direction: FlexDirection::Column,
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
-                padding: UiRect::all(Val::Px(28.0)),
+                padding: UiRect::axes(Val::Px(24.0), Val::Px(28.0)),
                 ..default()
             },
-            BackgroundColor(Color::srgb(0.08, 0.10, 0.08)),
+            BackgroundColor(Color::srgb(0.36, 0.62, 0.92)),
         ))
         .with_children(|parent| {
             parent
                 .spawn((
                     Node {
-                        width: Val::Px(520.0),
+                        width: Val::Px(560.0),
                         max_width: Val::Percent(100.0),
                         flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(14.0),
-                        padding: UiRect::all(Val::Px(24.0)),
-                        border: UiRect::all(Val::Px(2.0)),
+                        align_items: AlignItems::Center,
+                        row_gap: Val::Px(12.0),
+                        padding: UiRect::all(Val::Px(18.0)),
                         ..default()
                     },
-                    BorderColor::all(Color::srgb(0.22, 0.28, 0.22)),
-                    BackgroundColor(Color::srgb(0.14, 0.17, 0.14)),
+                    BackgroundColor(Color::NONE),
                 ))
                 .with_children(|card| {
                     card.spawn((
                         Text::new("Gecynd"),
                         TextFont {
-                            font_size: 42.0,
+                            font_size: 64.0,
                             ..default()
                         },
                         TextColor(Color::WHITE),
                     ));
 
                     card.spawn((
-                        Text::new("Survival sandbox prototype"),
-                        TextFont {
-                            font_size: 20.0,
-                            ..default()
-                        },
-                        TextColor(Color::srgb(0.82, 0.86, 0.82)),
-                    ));
-
-                    card.spawn((
-                        Text::new(format!("Default save path: {DEFAULT_SAVE_PATH}")),
+                        Text::new("Rusty blocks. Survival first."),
                         TextFont {
                             font_size: 18.0,
                             ..default()
                         },
-                        TextColor(Color::srgb(0.72, 0.78, 0.72)),
-                    ));
-
-                    card.spawn((
-                        Text::new(if save_state.save_exists() {
-                            "Existing save detected. You can continue it or start a new world."
-                        } else {
-                            "No save file found yet. Start a new world to create one."
-                        }),
-                        TextFont {
-                            font_size: 18.0,
+                        TextColor(Color::srgb(0.96, 0.94, 0.56)),
+                        Node {
+                            margin: UiRect::bottom(Val::Px(16.0)),
                             ..default()
                         },
-                        TextColor(Color::srgb(0.72, 0.78, 0.72)),
                     ));
 
                     spawn_menu_button(card, "New Save", MainMenuAction::NewSave, true);
@@ -139,7 +129,48 @@ fn setup_main_menu(mut commands: Commands, save_state: Res<SaveState>) {
                         MainMenuAction::LoadSave,
                         save_state.save_exists(),
                     );
+
+                    card.spawn((
+                        Text::new(if save_state.save_exists() {
+                            "Existing save found."
+                        } else {
+                            "No save file found yet."
+                        }),
+                        TextFont {
+                            font_size: 16.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.92, 0.92, 0.92)),
+                        Node {
+                            margin: UiRect::top(Val::Px(12.0)),
+                            ..default()
+                        },
+                    ));
+
+                    card.spawn((
+                        Text::new(format!("Default save path: {DEFAULT_SAVE_PATH}")),
+                        TextFont {
+                            font_size: 14.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.88, 0.88, 0.88)),
+                    ));
                 });
+
+            parent.spawn((
+                Text::new("Bevy native UI prototype"),
+                TextFont {
+                    font_size: 14.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.95, 0.95, 0.95)),
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(12.0),
+                    bottom: Val::Px(10.0),
+                    ..default()
+                },
+            ));
         });
 }
 
@@ -154,16 +185,16 @@ fn spawn_menu_button(
             Button,
             MainMenuButton { action },
             Node {
-                width: Val::Percent(100.0),
-                height: Val::Px(56.0),
+                width: Val::Px(320.0),
+                height: Val::Px(40.0),
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
-                border: UiRect::all(Val::Px(1.0)),
+                border: UiRect::all(Val::Px(2.0)),
                 ..default()
             },
             BackgroundColor(if enabled { NORMAL_BUTTON } else { DISABLED_BUTTON }),
             BorderColor::all(if enabled {
-                Color::srgb(0.28, 0.34, 0.28)
+                Color::srgb(0.08, 0.08, 0.08)
             } else {
                 Color::srgb(0.16, 0.16, 0.16)
             }),
@@ -173,7 +204,7 @@ fn spawn_menu_button(
             button.spawn((
                 Text::new(label),
                 TextFont {
-                    font_size: 22.0,
+                    font_size: 20.0,
                     ..default()
                 },
                 TextColor(if enabled {
@@ -210,15 +241,15 @@ fn main_menu_button_visuals(
         match *interaction {
             Interaction::Pressed => {
                 *background = PRESSED_BUTTON.into();
-                *border = BorderColor::all(Color::WHITE);
+                *border = BorderColor::all(Color::srgb(0.95, 0.95, 0.95));
             }
             Interaction::Hovered => {
                 *background = HOVERED_BUTTON.into();
-                *border = BorderColor::all(Color::WHITE);
+                *border = BorderColor::all(Color::srgb(0.95, 0.95, 0.95));
             }
             Interaction::None => {
                 *background = NORMAL_BUTTON.into();
-                *border = BorderColor::all(Color::srgb(0.28, 0.34, 0.28));
+                *border = BorderColor::all(Color::srgb(0.08, 0.08, 0.08));
             }
         }
     }
