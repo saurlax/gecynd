@@ -14,9 +14,6 @@ const PLAYER_GRAVITY: f32 = 25.0;
 const PLAYER_MAX_FALL_SPEED: f32 = 40.0;
 const PLAYER_JUMP_SPEED: f32 = 6.5;
 const PLAYER_STEP_HEIGHT: f32 = 0.5;
-const MIN_BRUSH_SIZE: i32 = 1;
-const MAX_BRUSH_SIZE: i32 = 16;
-const MAX_FILL_VOXELS: usize = 4096;
 
 #[derive(Component)]
 pub struct Player;
@@ -36,27 +33,9 @@ pub struct NeedsRenderRefresh;
 pub struct NeedsPhysicsRefresh;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BrushShape {
-    Single,
-    Cube,
-    Sphere,
-    Plane,
-    Fill,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EditMode {
     Break,
     Place,
-    Paint,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EditAction {
-    Apply,
-    Undo,
-    Redo,
-    Preview,
 }
 
 #[derive(Clone, Debug)]
@@ -68,27 +47,14 @@ pub struct EditOperation {
 
 #[derive(Clone, Debug, Message)]
 pub struct EditRequest {
-    pub action: EditAction,
     pub positions: Vec<Vec3>,
     pub operations: Vec<EditOperation>,
 }
 
 #[derive(Clone)]
-pub struct EditRecord {
-    pub operations: Vec<AppliedEditOperation>,
-}
-
-#[derive(Clone)]
 pub struct AppliedEditOperation {
     pub position: Vec3,
-    pub before: VoxelType,
     pub after: VoxelType,
-}
-
-#[derive(Resource, Default)]
-pub struct EditHistory {
-    pub undo_stack: Vec<EditRecord>,
-    pub redo_stack: Vec<EditRecord>,
 }
 
 #[derive(Resource)]
@@ -97,8 +63,6 @@ pub struct PlayerInteraction {
     pub hit_face: Option<VoxelFace>,
     pub interaction_range: f32,
     pub selected_material: VoxelType,
-    pub brush_shape: BrushShape,
-    pub brush_size: i32,
 }
 
 impl Default for PlayerInteraction {
@@ -108,8 +72,6 @@ impl Default for PlayerInteraction {
             hit_face: None,
             interaction_range: 10.0,
             selected_material: VoxelType::Stone,
-            brush_shape: BrushShape::Single,
-            brush_size: 1,
         }
     }
 }
@@ -189,7 +151,6 @@ impl Plugin for PlayerPlugin {
             .init_resource::<CursorState>()
             .init_resource::<PlacementCooldown>()
             .init_resource::<Inventory>()
-            .init_resource::<EditHistory>()
             .add_systems(Startup, setup_cursor_grab)
             .add_systems(
                 Update,
@@ -205,8 +166,6 @@ impl Plugin for PlayerPlugin {
                 (
                     player_look,
                     material_selection_input,
-                    brush_selection_input,
-                    undo_redo_input,
                     voxel_interaction,
                     voxel_selection,
                 ),
@@ -574,172 +533,17 @@ fn material_selection_input(
     }
 }
 
-fn brush_selection_input(
-    keyboard_input: Res<ButtonInput<KeyCode>>,
-    mut interaction: ResMut<PlayerInteraction>,
-) {
-    if keyboard_input.just_pressed(KeyCode::Digit4) {
-        interaction.brush_shape = BrushShape::Single;
-    } else if keyboard_input.just_pressed(KeyCode::Digit5) {
-        interaction.brush_shape = BrushShape::Cube;
-    } else if keyboard_input.just_pressed(KeyCode::Digit6) {
-        interaction.brush_shape = BrushShape::Sphere;
-    } else if keyboard_input.just_pressed(KeyCode::Digit7) {
-        interaction.brush_shape = BrushShape::Plane;
-    } else if keyboard_input.just_pressed(KeyCode::Digit8) {
-        interaction.brush_shape = BrushShape::Fill;
-    }
-
-    if keyboard_input.just_pressed(KeyCode::KeyZ) {
-        interaction.brush_size = (interaction.brush_size - 1).clamp(MIN_BRUSH_SIZE, MAX_BRUSH_SIZE);
-    } else if keyboard_input.just_pressed(KeyCode::KeyX) {
-        interaction.brush_size = (interaction.brush_size + 1).clamp(MIN_BRUSH_SIZE, MAX_BRUSH_SIZE);
-    }
-}
-
-fn undo_redo_input(
-    keyboard_input: Res<ButtonInput<KeyCode>>,
-    mut edit_history: ResMut<EditHistory>,
-    mut edit_writer: MessageWriter<EditRequest>,
-) {
-    let control_pressed = keyboard_input.pressed(KeyCode::ControlLeft)
-        || keyboard_input.pressed(KeyCode::ControlRight);
-    if !control_pressed {
-        return;
-    }
-
-    if keyboard_input.just_pressed(KeyCode::KeyZ) {
-        if let Some(record) = edit_history.undo_stack.pop() {
-            let operations = record
-                .operations
-                .iter()
-                .map(|operation| EditOperation {
-                    position: operation.position,
-                    voxel_type: operation.before,
-                    mode: if operation.before == VoxelType::Air {
-                        EditMode::Break
-                    } else {
-                        EditMode::Place
-                    },
-                })
-                .collect::<Vec<_>>();
-
-            edit_writer.write(EditRequest {
-                action: EditAction::Undo,
-                positions: operations.iter().map(|operation| operation.position).collect(),
-                operations,
-            });
-            edit_history.redo_stack.push(record);
-        }
-    } else if keyboard_input.just_pressed(KeyCode::KeyY) {
-        if let Some(record) = edit_history.redo_stack.pop() {
-            let operations = record
-                .operations
-                .iter()
-                .map(|operation| EditOperation {
-                    position: operation.position,
-                    voxel_type: operation.after,
-                    mode: if operation.after == VoxelType::Air {
-                        EditMode::Break
-                    } else {
-                        EditMode::Place
-                    },
-                })
-                .collect::<Vec<_>>();
-
-            edit_writer.write(EditRequest {
-                action: EditAction::Redo,
-                positions: operations.iter().map(|operation| operation.position).collect(),
-                operations,
-            });
-            edit_history.undo_stack.push(record);
-        }
-    }
-}
-
 fn calculate_placement_position(voxel_center: Vec3, face: VoxelFace) -> Vec3 {
     let (dx, dy, dz) = face.get_offset();
     voxel_center + Vec3::new(dx as f32, dy as f32, dz as f32) * VOXEL_SIZE
 }
 
-pub fn brush_world_size(brush_shape: BrushShape, brush_size: i32) -> f32 {
-    match brush_shape {
-        BrushShape::Single | BrushShape::Fill => VOXEL_SIZE,
-        BrushShape::Cube | BrushShape::Sphere | BrushShape::Plane => brush_size as f32 * VOXEL_SIZE,
-    }
+pub fn brush_world_size() -> f32 {
+    VOXEL_SIZE
 }
 
-fn build_brush_positions(
-    center: Vec3,
-    brush_shape: BrushShape,
-    brush_size: i32,
-    hit_face: Option<VoxelFace>,
-) -> Vec<Vec3> {
-    match brush_shape {
-        BrushShape::Single | BrushShape::Fill => vec![center],
-        BrushShape::Cube | BrushShape::Sphere => build_volume_brush_positions(center, brush_shape, brush_size),
-        BrushShape::Plane => build_plane_brush_positions(center, brush_size, hit_face),
-    }
-}
-
-fn build_volume_brush_positions(center: Vec3, brush_shape: BrushShape, brush_size: i32) -> Vec<Vec3> {
-    let mut positions = Vec::new();
-    let start = -(brush_size / 2);
-    let end = start + brush_size - 1;
-    let center_bias = if brush_size % 2 == 0 { 0.5 } else { 0.0 };
-    let radius = brush_size as f32 * 0.5;
-
-    for x in start..=end {
-        for y in start..=end {
-            for z in start..=end {
-                if brush_shape == BrushShape::Sphere {
-                    let sample_x = x as f32 + center_bias;
-                    let sample_y = y as f32 + center_bias;
-                    let sample_z = z as f32 + center_bias;
-                    if sample_x * sample_x + sample_y * sample_y + sample_z * sample_z
-                        > radius * radius
-                    {
-                        continue;
-                    }
-                }
-
-                let offset = Vec3::new(x as f32, y as f32, z as f32) * VOXEL_SIZE;
-                positions.push(center + offset);
-            }
-        }
-    }
-
-    positions
-}
-
-fn build_plane_brush_positions(center: Vec3, brush_size: i32, hit_face: Option<VoxelFace>) -> Vec<Vec3> {
-    let mut positions = Vec::new();
-    let start = -(brush_size / 2);
-    let end = start + brush_size - 1;
-    let axis = hit_face.unwrap_or(VoxelFace::PositiveY);
-
-    for a in start..=end {
-        for b in start..=end {
-            let offset = match axis {
-                VoxelFace::NegativeX | VoxelFace::PositiveX => Vec3::new(0.0, a as f32, b as f32),
-                VoxelFace::NegativeY | VoxelFace::PositiveY => Vec3::new(a as f32, 0.0, b as f32),
-                VoxelFace::NegativeZ | VoxelFace::PositiveZ => Vec3::new(a as f32, b as f32, 0.0),
-            } * VOXEL_SIZE;
-            positions.push(center + offset);
-        }
-    }
-
-    positions
-}
-
-pub fn brush_preview_origin(center: Vec3, brush_shape: BrushShape, brush_size: i32) -> Vec3 {
-    match brush_shape {
-        BrushShape::Single | BrushShape::Fill => center - Vec3::splat(VOXEL_SIZE / 2.0),
-        BrushShape::Cube | BrushShape::Sphere | BrushShape::Plane => {
-            let half_extent = brush_world_size(brush_shape, brush_size) * 0.5;
-            center - Vec3::splat(half_extent)
-        }
-    }
+pub fn brush_preview_origin(center: Vec3) -> Vec3 {
+    center - Vec3::splat(VOXEL_SIZE / 2.0)
 }
 
 pub fn placement_center(selected_voxel_center: Vec3, hit_face: VoxelFace) -> Vec3 {
@@ -749,14 +553,8 @@ pub fn placement_center(selected_voxel_center: Vec3, hit_face: VoxelFace) -> Vec
 pub fn brush_center_for_edit(
     selected_voxel_center: Vec3,
     hit_face: Option<VoxelFace>,
-    brush_shape: BrushShape,
 ) -> Option<Vec3> {
-    match brush_shape {
-        BrushShape::Single | BrushShape::Plane => {
-            hit_face.map(|face| placement_center(selected_voxel_center, face))
-        }
-        BrushShape::Cube | BrushShape::Sphere | BrushShape::Fill => Some(selected_voxel_center),
-    }
+    hit_face.map(|face| placement_center(selected_voxel_center, face))
 }
 
 fn player_overlaps_voxel(player_pos: Vec3, voxel_center: Vec3) -> bool {
@@ -776,7 +574,6 @@ fn player_overlaps_voxel(player_pos: Vec3, voxel_center: Vec3) -> bool {
 fn voxel_interaction(
     interaction: Res<PlayerInteraction>,
     mouse_input: Res<ButtonInput<MouseButton>>,
-    keyboard_input: Res<ButtonInput<KeyCode>>,
     cursor_query: Query<&CursorOptions, With<PrimaryWindow>>,
     chunk_query: Query<&crate::world::Chunk>,
     world: Res<World>,
@@ -784,7 +581,6 @@ fn voxel_interaction(
     time: Res<Time>,
     mut placement_cooldown: ResMut<PlacementCooldown>,
     mut edit_writer: MessageWriter<EditRequest>,
-    mut edit_history: ResMut<EditHistory>,
 ) {
     if let Ok(cursor_options) = cursor_query.single() {
         if cursor_options.grab_mode != CursorGrabMode::Locked {
@@ -797,20 +593,10 @@ fn voxel_interaction(
     };
 
     if mouse_input.just_pressed(MouseButton::Left) {
-        let operations = create_break_operations(
-            &interaction,
-            selected_voxel_pos,
-            &world,
-            &chunk_query,
-        );
+        let operations = create_break_operations(selected_voxel_pos, &world, &chunk_query);
 
         if !operations.is_empty() {
-            queue_edit_request(
-                EditAction::Apply,
-                operations,
-                &mut edit_writer,
-                &mut edit_history,
-            );
+            queue_edit_request(operations, &mut edit_writer);
         }
     }
 
@@ -822,62 +608,33 @@ fn voxel_interaction(
 
         if let Ok(player_transform) = player_query.single() {
             let operations = create_place_operations(
-                &interaction,
                 selected_voxel_pos,
                 player_transform.translation,
                 &world,
                 &chunk_query,
+                interaction.selected_material,
+                interaction.hit_face,
             );
 
             if !operations.is_empty() {
-                queue_edit_request(
-                    EditAction::Apply,
-                    operations,
-                    &mut edit_writer,
-                    &mut edit_history,
-                );
+                queue_edit_request(operations, &mut edit_writer);
                 placement_cooldown.last_place_time = current_time;
             }
-        }
-    }
-
-    if keyboard_input.just_pressed(KeyCode::KeyV) {
-        let operations = create_paint_operations(&interaction, selected_voxel_pos, &world, &chunk_query);
-        if !operations.is_empty() {
-            queue_edit_request(
-                EditAction::Apply,
-                operations,
-                &mut edit_writer,
-                &mut edit_history,
-            );
         }
     }
 }
 
 fn create_break_operations(
-    interaction: &PlayerInteraction,
     selected_voxel_pos: Vec3,
     world: &World,
     chunk_query: &Query<&crate::world::Chunk>,
 ) -> Vec<AppliedEditOperation> {
-    let target_positions = if interaction.brush_shape == BrushShape::Fill {
-        flood_fill_positions(selected_voxel_pos, world, chunk_query)
-    } else {
-        build_brush_positions(
-            selected_voxel_pos,
-            interaction.brush_shape,
-            interaction.brush_size,
-            interaction.hit_face,
-        )
-    };
-
-    target_positions
+    [selected_voxel_pos]
         .into_iter()
         .filter_map(|target_pos| {
             world.get_voxel_at_world(target_pos, chunk_query).and_then(|existing| {
                 existing.is_solid().then_some(AppliedEditOperation {
                     position: target_pos,
-                    before: existing.voxel_type,
                     after: VoxelType::Air,
                 })
             })
@@ -886,76 +643,32 @@ fn create_break_operations(
 }
 
 fn create_place_operations(
-    interaction: &PlayerInteraction,
     selected_voxel_pos: Vec3,
     player_pos: Vec3,
     world: &World,
     chunk_query: &Query<&crate::world::Chunk>,
+    selected_material: VoxelType,
+    hit_face: Option<VoxelFace>,
 ) -> Vec<AppliedEditOperation> {
-    let Some(place_center) = brush_center_for_edit(
-        selected_voxel_pos,
-        interaction.hit_face,
-        interaction.brush_shape,
-    ) else {
+    let Some(place_center) = brush_center_for_edit(selected_voxel_pos, hit_face) else {
         return Vec::new();
     };
 
-    let target_positions = build_brush_positions(
-        place_center,
-        interaction.brush_shape,
-        interaction.brush_size,
-        interaction.hit_face,
-    );
-
-    target_positions
+    [place_center]
         .into_iter()
         .filter(|target_pos| !player_overlaps_voxel(player_pos, *target_pos))
         .filter_map(|target_pos| {
             world.get_voxel_at_world(target_pos, chunk_query).and_then(|existing| {
                 (!existing.is_solid()).then_some(AppliedEditOperation {
                     position: target_pos,
-                    before: existing.voxel_type,
-                    after: interaction.selected_material,
+                    after: selected_material,
                 })
             })
         })
         .collect()
 }
 
-fn create_paint_operations(
-    interaction: &PlayerInteraction,
-    selected_voxel_pos: Vec3,
-    world: &World,
-    chunk_query: &Query<&crate::world::Chunk>,
-) -> Vec<AppliedEditOperation> {
-    let target_positions = build_brush_positions(
-        selected_voxel_pos,
-        interaction.brush_shape,
-        interaction.brush_size,
-        interaction.hit_face,
-    );
-
-    target_positions
-        .into_iter()
-        .filter_map(|target_pos| {
-            world.get_voxel_at_world(target_pos, chunk_query).and_then(|existing| {
-                (existing.is_solid() && existing.voxel_type != interaction.selected_material)
-                    .then_some(AppliedEditOperation {
-                        position: target_pos,
-                        before: existing.voxel_type,
-                        after: interaction.selected_material,
-                    })
-            })
-        })
-        .collect()
-}
-
-fn queue_edit_request(
-    action: EditAction,
-    operations: Vec<AppliedEditOperation>,
-    edit_writer: &mut MessageWriter<EditRequest>,
-    edit_history: &mut EditHistory,
-) {
+fn queue_edit_request(operations: Vec<AppliedEditOperation>, edit_writer: &mut MessageWriter<EditRequest>) {
     let request_operations = operations
         .iter()
         .map(|operation| EditOperation {
@@ -963,10 +676,8 @@ fn queue_edit_request(
             voxel_type: operation.after,
             mode: if operation.after == VoxelType::Air {
                 EditMode::Break
-            } else if operation.before == VoxelType::Air {
-                EditMode::Place
             } else {
-                EditMode::Paint
+                EditMode::Place
             },
         })
         .collect::<Vec<_>>();
@@ -977,75 +688,9 @@ fn queue_edit_request(
         .collect::<Vec<_>>();
 
     edit_writer.write(EditRequest {
-        action,
         positions,
         operations: request_operations,
     });
-
-    if action == EditAction::Apply {
-        edit_history.undo_stack.push(EditRecord { operations });
-        edit_history.redo_stack.clear();
-    }
-}
-
-fn flood_fill_positions(
-    start: Vec3,
-    world: &World,
-    chunk_query: &Query<&crate::world::Chunk>,
-) -> Vec<Vec3> {
-    let Some(target) = world.get_voxel_at_world(start, chunk_query) else {
-        return Vec::new();
-    };
-    if !target.is_solid() {
-        return Vec::new();
-    }
-
-    let mut visited = std::collections::VecDeque::from([start]);
-    let mut discovered = std::collections::HashSet::from([quantize_pos(start)]);
-    let mut positions = Vec::new();
-
-    while let Some(position) = visited.pop_front() {
-        positions.push(position);
-        if positions.len() >= MAX_FILL_VOXELS {
-            break;
-        }
-
-        for neighbor in face_neighbors(position) {
-            let key = quantize_pos(neighbor);
-            if discovered.contains(&key) {
-                continue;
-            }
-            discovered.insert(key);
-
-            if world
-                .get_voxel_at_world(neighbor, chunk_query)
-                .is_some_and(|voxel| voxel.voxel_type == target.voxel_type)
-            {
-                visited.push_back(neighbor);
-            }
-        }
-    }
-
-    positions
-}
-
-fn quantize_pos(position: Vec3) -> (i32, i32, i32) {
-    (
-        (position.x / VOXEL_SIZE).round() as i32,
-        (position.y / VOXEL_SIZE).round() as i32,
-        (position.z / VOXEL_SIZE).round() as i32,
-    )
-}
-
-fn face_neighbors(position: Vec3) -> [Vec3; 6] {
-    [
-        position + Vec3::new(VOXEL_SIZE, 0.0, 0.0),
-        position + Vec3::new(-VOXEL_SIZE, 0.0, 0.0),
-        position + Vec3::new(0.0, VOXEL_SIZE, 0.0),
-        position + Vec3::new(0.0, -VOXEL_SIZE, 0.0),
-        position + Vec3::new(0.0, 0.0, VOXEL_SIZE),
-        position + Vec3::new(0.0, 0.0, -VOXEL_SIZE),
-    ]
 }
 
 fn player_unstuck(

@@ -1,4 +1,4 @@
-use crate::player::{BrushShape, Player, PlayerInteraction};
+use crate::player::{Inventory, Player, PlayerInteraction};
 use crate::voxel::VoxelType;
 use crate::world::InitialWorldGeneration;
 use bevy::prelude::*;
@@ -23,6 +23,9 @@ struct SelectedMaterialText;
 
 #[derive(Component)]
 struct BrushSettingsText;
+
+#[derive(Component)]
+struct InventoryText;
 
 #[derive(Component)]
 struct LoadingText;
@@ -82,13 +85,27 @@ fn setup_ui(mut commands: Commands) {
             ));
 
             parent.spawn((
-                Text::new("Brush: Single | Size: 1 [4/5/6/7/8 shape, Z/X size]"),
+                Text::new("Mode: Survival block interaction"),
                 TextFont {
                     font_size: 18.0,
                     ..default()
                 },
                 TextColor(Color::WHITE),
                 BrushSettingsText,
+                Node {
+                    margin: UiRect::top(Val::Px(5.0)),
+                    ..default()
+                },
+            ));
+
+            parent.spawn((
+                Text::new("Inventory: Grass 0 | Dirt 0 | Stone 0"),
+                TextFont {
+                    font_size: 18.0,
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+                InventoryText,
                 Node {
                     margin: UiRect::top(Val::Px(5.0)),
                     ..default()
@@ -110,10 +127,6 @@ fn setup_ui(mut commands: Commands) {
                         "Left Click: Break Block",
                         "Right Click: Place Block",
                         "1/2/3: Select Grass/Dirt/Stone",
-                        "4/5/6/7/8: Single/Cube/Sphere/Plane/Fill",
-                        "Z/X: Decrease/Increase Brush Size",
-                        "V: Paint Selected Material",
-                        "Ctrl+Z / Ctrl+Y: Undo / Redo",
                         "Shift: Sprint",
                         "F1: Toggle AABB Debug",
                         "F2: Toggle Render Wireframe",
@@ -162,6 +175,7 @@ fn setup_ui(mut commands: Commands) {
 fn update_ui_text(
     player_query: Query<&Transform, With<Player>>,
     interaction: Res<PlayerInteraction>,
+    inventory: Res<Inventory>,
     world: Res<crate::world::World>,
     generation_state: Res<InitialWorldGeneration>,
     loading_root_query: Query<Entity, With<LoadingRoot>>,
@@ -171,6 +185,7 @@ fn update_ui_text(
         Query<&mut Text, With<SelectedBlockText>>,
         Query<&mut Text, With<SelectedMaterialText>>,
         Query<&mut Text, With<BrushSettingsText>>,
+        Query<&mut Text, With<InventoryText>>,
     )>,
 ) {
     if generation_state.finished {
@@ -226,16 +241,15 @@ fn update_ui_text(
     }
 
     if let Ok(mut text) = text_queries.p3().single_mut() {
-        let brush_name = match interaction.brush_shape {
-            BrushShape::Single => "Single",
-            BrushShape::Cube => "Cube",
-            BrushShape::Sphere => "Sphere",
-            BrushShape::Plane => "Plane",
-            BrushShape::Fill => "Fill",
-        };
+        **text = "Mode: Survival block interaction".to_string();
+    }
+
+    if let Ok(mut text) = text_queries.p4().single_mut() {
         **text = format!(
-            "Brush: {brush_name} | Size: {} [4/5/6/7/8 shape, Z/X size]",
-            interaction.brush_size
+            "Inventory: Grass {} | Dirt {} | Stone {}",
+            inventory.count(VoxelType::Grass),
+            inventory.count(VoxelType::Dirt),
+            inventory.count(VoxelType::Stone)
         );
     }
 }

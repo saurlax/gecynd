@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
+use bevy::tasks::{AsyncComputeTaskPool, Task, futures_lite::future};
 use serde::{Deserialize, Serialize};
 
 use crate::player::{Inventory, Player};
@@ -47,6 +48,7 @@ pub struct SaveState {
     pub loaded_player_translation: Vec3,
     pub dirty: bool,
     pub autosave_timer: Timer,
+    pub pending_write: Option<Task<Result<(), String>>>,
 }
 
 impl Default for SaveState {
@@ -74,6 +76,7 @@ impl Default for SaveState {
                 .unwrap_or(Vec3::ZERO),
             dirty: false,
             autosave_timer: Timer::from_seconds(2.0, TimerMode::Repeating),
+            pending_write: None,
         }
     }
 }
@@ -154,28 +157,36 @@ fn autosave_world_system(
     chunk_query: Query<&Chunk>,
     inventory: Res<Inventory>,
 ) {
+    if let Some(task) = save_state.pending_write.as_mut() {
+        if let Some(result) = future::block_on(future::poll_once(task)) {
+            match result {
+                Ok(()) => save_state.dirty = false,
+                Err(error) => warn!("Failed to save world: {error}"),
+            }
+            save_state.pending_write = None;
+        }
+        return;
+    }
+
     save_state.autosave_timer.tick(time.delta());
     if !save_state.dirty || !save_state.autosave_timer.just_finished() {
         return;
     }
 
-    if let Err(error) = write_world_save(&save_state, &player_query, &chunk_query, &inventory) {
-        warn!("Failed to save world: {error}");
-    } else {
-        save_state.dirty = false;
-    }
+    let save_payload = build_save_payload(&save_state, &player_query, &chunk_query, &inventory);
+    let save_path = save_state.path.clone();
+    let task_pool = AsyncComputeTaskPool::get();
+    save_state.pending_write = Some(task_pool.spawn(async move {
+        write_save_payload(save_path, save_payload)
+    }));
 }
 
-pub fn write_world_save(
+fn build_save_payload(
     save_state: &SaveState,
     player_query: &Query<&Transform, With<Player>>,
     chunk_query: &Query<&Chunk>,
     inventory: &Inventory,
-) -> Result<(), String> {
-    if let Some(parent) = save_state.path.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-
+) -> WorldSaveFile {
     let player_translation = player_query
         .single()
         .map(|transform| transform.translation)
@@ -208,7 +219,15 @@ pub fn write_world_save(
         edited_chunks,
     };
 
+    save_file
+}
+
+fn write_save_payload(path: PathBuf, save_file: WorldSaveFile) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+
     let payload = serde_json::to_vec_pretty(&save_file).map_err(|error| error.to_string())?;
-    fs::write(&save_state.path, payload).map_err(|error| error.to_string())?;
+    fs::write(path, payload).map_err(|error| error.to_string())?;
     Ok(())
 }

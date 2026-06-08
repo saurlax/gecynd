@@ -4,8 +4,7 @@ use bevy::tasks::{AsyncComputeTaskPool, Task, futures_lite::future};
 use serde::{Deserialize, Serialize};
 
 use crate::player::{
-    EditAction, EditMode, EditRequest, Inventory, NeedsPhysicsRefresh, NeedsRenderRefresh, Player,
-    spawn_player,
+    EditMode, EditRequest, Inventory, NeedsPhysicsRefresh, NeedsRenderRefresh, Player, spawn_player,
 };
 use crate::save::{SaveState, SavedChunk};
 use crate::terrain::{TERRAIN_MAX_HEIGHT_METERS, TerrainGenerator};
@@ -422,10 +421,16 @@ fn chunk_loading_system(
                 }
 
                 let coord = ChunkCoord::new(x, z);
+                let saved_chunks = save_state
+                    .edited_chunks
+                    .get(&coord)
+                    .cloned()
+                    .map(|chunk| HashMap::from([(coord, chunk)]))
+                    .unwrap_or_default();
                 queue_chunk_generation(
                     &mut world,
                     coord,
-                    save_state.edited_chunks.clone(),
+                    saved_chunks,
                     save_state.seed,
                 );
             }
@@ -479,13 +484,7 @@ fn apply_edit_requests_system(
         for world_pos in changed_positions {
             mark_chunk_for_update(&mut commands, &world, world_pos);
         }
-
-        if request.action == EditAction::Undo || request.action == EditAction::Redo {
-            save_state.dirty = true;
-            continue;
-        }
-
-        if request.action != EditAction::Preview && !request.positions.is_empty() {
+        if !request.positions.is_empty() {
             save_state.dirty = true;
         }
     }
@@ -526,19 +525,6 @@ fn apply_edit_request(
                         && world.set_voxel_at_world(operation.position, Voxel::new(VoxelType::Air), chunk_query)
                     {
                         inventory.add(previous.voxel_type, 1);
-                        changed_positions.push(operation.position);
-                    }
-                }
-            }
-            EditMode::Paint => {
-                if let Some(existing) = world.get_voxel_at_world(operation.position, &chunk_query.as_readonly()) {
-                    if existing.is_solid()
-                        && world.set_voxel_at_world(
-                            operation.position,
-                            Voxel::new(operation.voxel_type),
-                            chunk_query,
-                        )
-                    {
                         changed_positions.push(operation.position);
                     }
                 }
