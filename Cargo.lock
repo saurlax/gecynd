@@ -2565,6 +2565,8 @@ dependencies = [
  "bevy",
  "bevy_rapier3d",
  "noise",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

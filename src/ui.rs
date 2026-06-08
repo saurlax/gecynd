@@ -82,7 +82,7 @@ fn setup_ui(mut commands: Commands) {
             ));
 
             parent.spawn((
-                Text::new("Brush: Single | Size: 4 [4/5/6 shape, Z/X size]"),
+                Text::new("Brush: Single | Size: 1 [4/5/6/7/8 shape, Z/X size]"),
                 TextFont {
                     font_size: 18.0,
                     ..default()
@@ -110,8 +110,10 @@ fn setup_ui(mut commands: Commands) {
                         "Left Click: Break Block",
                         "Right Click: Place Block",
                         "1/2/3: Select Grass/Dirt/Stone",
-                        "4/5/6: Select Single/Cube/Sphere",
+                        "4/5/6/7/8: Single/Cube/Sphere/Plane/Fill",
                         "Z/X: Decrease/Increase Brush Size",
+                        "V: Paint Selected Material",
+                        "Ctrl+Z / Ctrl+Y: Undo / Redo",
                         "Shift: Sprint",
                         "F1: Toggle AABB Debug",
                         "F2: Toggle Render Wireframe",
@@ -228,9 +230,11 @@ fn update_ui_text(
             BrushShape::Single => "Single",
             BrushShape::Cube => "Cube",
             BrushShape::Sphere => "Sphere",
+            BrushShape::Plane => "Plane",
+            BrushShape::Fill => "Fill",
         };
         **text = format!(
-            "Brush: {brush_name} | Size: {} [4/5/6 shape, Z/X size]",
+            "Brush: {brush_name} | Size: {} [4/5/6/7/8 shape, Z/X size]",
             interaction.brush_size
         );
     }

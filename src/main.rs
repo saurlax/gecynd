@@ -4,6 +4,7 @@ use bevy::window::{ExitCondition, WindowCloseRequested};
 mod physics;
 mod player;
 mod render;
+mod save;
 mod terrain;
 mod ui;
 mod voxel;
@@ -12,6 +13,7 @@ mod world;
 use physics::PhysicsPlugin;
 use player::PlayerPlugin;
 use render::RenderPlugin;
+use save::SavePlugin;
 use ui::UiPlugin;
 use world::WorldPlugin;
 
@@ -27,6 +29,7 @@ fn main() {
         }))
         .insert_resource(ClearColor(Color::srgb(0.53, 0.81, 0.98)))
         .add_plugins((
+            SavePlugin,
             WorldPlugin,
             PlayerPlugin,
             PhysicsPlugin,

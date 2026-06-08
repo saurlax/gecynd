@@ -308,6 +308,12 @@ fn voxel_highlight_system(
                             brush_world_size(interaction.brush_shape, interaction.brush_size) * 0.5;
                         create_sphere_wireframe(radius, 24, 12)
                     }
+                    BrushShape::Plane => {
+                        let size =
+                            brush_world_size(interaction.brush_shape, interaction.brush_size);
+                        create_box_wireframe(Vec3::new(size, VOXEL_SIZE, size))
+                    }
+                    BrushShape::Fill => create_single_voxel_wireframe(),
                 };
 
                 highlight_mesh.0 = meshes.add(mesh);

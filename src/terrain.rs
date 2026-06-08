@@ -16,15 +16,19 @@ pub struct TerrainGenerator {
     rolling_noise: Perlin,
     detail_noise: Perlin,
     surface_noise: Perlin,
+    cave_noise: Perlin,
+    ore_noise: Perlin,
 }
 
 impl TerrainGenerator {
-    pub fn new() -> Self {
+    pub fn new(seed: u32) -> Self {
         Self {
-            broad_noise: Perlin::new(12345),
-            rolling_noise: Perlin::new(67890),
-            detail_noise: Perlin::new(24680),
-            surface_noise: Perlin::new(13579),
+            broad_noise: Perlin::new(seed),
+            rolling_noise: Perlin::new(seed.wrapping_add(67890)),
+            detail_noise: Perlin::new(seed.wrapping_add(24680)),
+            surface_noise: Perlin::new(seed.wrapping_add(13579)),
+            cave_noise: Perlin::new(seed.wrapping_add(424242)),
+            ore_noise: Perlin::new(seed.wrapping_add(919191)),
         }
     }
 
@@ -45,7 +49,19 @@ impl TerrainGenerator {
 
                 for y in 0..CHUNK_VOXELS_HEIGHT {
                     let yi = y as i32;
+                    let world_y = y as f32 * VOXEL_SIZE;
+                    let cave_noise = self.cave_noise.get([
+                        world_x as f64 * 0.055,
+                        world_y as f64 * 0.055,
+                        world_z as f64 * 0.055,
+                    ]);
+                    let ore_noise = self
+                        .ore_noise
+                        .get([world_x as f64 * 0.09, world_y as f64 * 0.09, world_z as f64 * 0.09]);
+
                     let voxel_type = if yi > surface_voxel_y {
+                        VoxelType::Air
+                    } else if yi < surface_voxel_y - 6 && cave_noise > 0.42 {
                         VoxelType::Air
                     } else if yi == surface_voxel_y {
                         if surface_noise > STONE_CAP_NOISE_THRESHOLD {
@@ -55,6 +71,8 @@ impl TerrainGenerator {
                         }
                     } else if yi >= surface_voxel_y - dirt_voxels {
                         VoxelType::Dirt
+                    } else if yi < surface_voxel_y - dirt_voxels - 8 && ore_noise > 0.63 {
+                        VoxelType::Grass
                     } else {
                         VoxelType::Stone
                     };

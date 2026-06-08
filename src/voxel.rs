@@ -2,6 +2,7 @@ pub const VOXELS_PER_METER: f32 = 16.0;
 pub const VOXEL_SIZE: f32 = 1.0 / VOXELS_PER_METER;
 
 use bevy::prelude::Color;
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum VoxelFace {
@@ -102,7 +103,7 @@ impl VoxelFace {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum VoxelType {
     Air,
     Stone,

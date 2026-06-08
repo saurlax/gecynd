@@ -1,10 +1,15 @@
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task, futures_lite::future};
+use serde::{Deserialize, Serialize};
 
-use crate::player::{Player, spawn_player};
+use crate::player::{
+    EditAction, EditMode, EditRequest, Inventory, NeedsPhysicsRefresh, NeedsRenderRefresh, Player,
+    spawn_player,
+};
+use crate::save::{SaveState, SavedChunk};
 use crate::terrain::{TERRAIN_MAX_HEIGHT_METERS, TerrainGenerator};
-use crate::voxel::{VOXEL_SIZE, Voxel};
+use crate::voxel::{VOXEL_SIZE, Voxel, VoxelType};
 
 pub const CHUNK_SIZE: usize = 32;
 pub const CHUNK_HEIGHT: usize = 256;
@@ -49,7 +54,7 @@ pub struct DebugViewMode {
     pub physics_wireframe: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ChunkCoord {
     pub x: i32,
     pub z: i32,
@@ -74,6 +79,7 @@ pub struct Chunk {
     pub coord: ChunkCoord,
     pub voxels: Vec<Voxel>,
     pub revision: u64,
+    pub modified: bool,
 }
 
 impl Chunk {
@@ -85,6 +91,7 @@ impl Chunk {
                 CHUNK_VOXELS_SIZE * CHUNK_VOXELS_HEIGHT * CHUNK_VOXELS_SIZE
             ],
             revision: 0,
+            modified: false,
         }
     }
 
@@ -106,6 +113,7 @@ impl Chunk {
             if self.voxels[index] != voxel {
                 self.voxels[index] = voxel;
                 self.revision += 1;
+                self.modified = true;
             }
         }
     }
@@ -230,6 +238,7 @@ impl Plugin for WorldPlugin {
             .init_resource::<DebugAabbState>()
             .init_resource::<DebugViewMode>()
             .init_resource::<InitialWorldGeneration>()
+            .add_message::<EditRequest>()
             .add_systems(Startup, start_initial_world_generation)
             .add_systems(
                 Update,
@@ -238,6 +247,7 @@ impl Plugin for WorldPlugin {
                     complete_pending_chunk_generation_system,
                     chunk_loading_system,
                     chunk_unloading_system,
+                    apply_edit_requests_system,
                     debug_view_mode_system,
                     debug_state_system,
                 ),
@@ -245,33 +255,54 @@ impl Plugin for WorldPlugin {
     }
 }
 
-fn queue_chunk_generation(world: &mut World, coord: ChunkCoord) {
+fn queue_chunk_generation(
+    world: &mut World,
+    coord: ChunkCoord,
+    saved_chunks: HashMap<ChunkCoord, SavedChunk>,
+    seed: u32,
+) {
     if world.chunks.contains_key(&coord) || world.pending_chunks.contains_key(&coord) {
         return;
     }
 
     let task_pool = AsyncComputeTaskPool::get();
     let task = task_pool.spawn(async move {
-        let terrain_generator = TerrainGenerator::new();
+        let terrain_generator = TerrainGenerator::new(seed);
         let mut chunk = Chunk::new(coord);
         terrain_generator.generate_chunk(&mut chunk);
+        if let Some(saved_chunk) = saved_chunks.get(&coord) {
+            for (index, voxel_type) in saved_chunk.voxels.iter().copied().enumerate() {
+                if index < chunk.voxels.len() {
+                    chunk.voxels[index] = Voxel::new(voxel_type);
+                }
+            }
+            chunk.modified = true;
+        }
         chunk
     });
 
     world.pending_chunks.insert(coord, task);
 }
 
-fn start_initial_world_generation(mut generation_state: ResMut<InitialWorldGeneration>) {
+fn start_initial_world_generation(
+    mut generation_state: ResMut<InitialWorldGeneration>,
+    save_state: Res<SaveState>,
+) {
     if generation_state.started {
         return;
     }
 
     generation_state.started = true;
-    let spawn_chunk = ChunkCoord::from_world_pos(initial_player_spawn_position());
+    let spawn_position = save_state
+        .initial_player_translation()
+        .unwrap_or_else(initial_player_spawn_position);
+    let spawn_chunk = ChunkCoord::from_world_pos(spawn_position);
+    let seed = save_state.seed;
+    let saved_chunks = save_state.edited_chunks.clone();
     let task_pool = AsyncComputeTaskPool::get();
 
     generation_state.task = Some(task_pool.spawn(async move {
-        let terrain_generator = TerrainGenerator::new();
+        let terrain_generator = TerrainGenerator::new(seed);
         let mut chunks = Vec::new();
 
         for x in (spawn_chunk.x - INITIAL_LOAD_RADIUS_CHUNKS)
@@ -289,6 +320,14 @@ fn start_initial_world_generation(mut generation_state: ResMut<InitialWorldGener
                 let coord = ChunkCoord::new(x, z);
                 let mut chunk = Chunk::new(coord);
                 terrain_generator.generate_chunk(&mut chunk);
+                if let Some(saved_chunk) = saved_chunks.get(&coord) {
+                    for (index, voxel_type) in saved_chunk.voxels.iter().copied().enumerate() {
+                        if index < chunk.voxels.len() {
+                            chunk.voxels[index] = Voxel::new(voxel_type);
+                        }
+                    }
+                    chunk.modified = true;
+                }
                 chunks.push(chunk);
             }
         }
@@ -301,6 +340,8 @@ fn complete_initial_world_generation(
     mut commands: Commands,
     mut world: ResMut<World>,
     mut generation_state: ResMut<InitialWorldGeneration>,
+    save_state: Res<SaveState>,
+    mut inventory: ResMut<Inventory>,
 ) {
     if generation_state.finished {
         return;
@@ -317,16 +358,18 @@ fn complete_initial_world_generation(
     for chunk in chunks {
         let coord = chunk.coord;
         let entity = commands
-            .spawn((
-                chunk,
-                crate::player::NeedsRenderRefresh,
-                crate::player::NeedsPhysicsRefresh,
-            ))
+            .spawn((chunk, NeedsRenderRefresh, NeedsPhysicsRefresh))
             .id();
         world.chunks.insert(coord, entity);
     }
 
-    spawn_player(&mut commands);
+    *inventory = crate::save::load_inventory_from_save(&save_state);
+    spawn_player(
+        &mut commands,
+        save_state
+            .initial_player_translation()
+            .unwrap_or_else(initial_player_spawn_position),
+    );
     generation_state.finished = true;
 }
 
@@ -355,17 +398,17 @@ fn complete_pending_chunk_generation_system(
     for (coord, chunk) in ready_chunks {
         world.pending_chunks.remove(&coord);
         let entity = commands
-            .spawn((
-                chunk,
-                crate::player::NeedsRenderRefresh,
-                crate::player::NeedsPhysicsRefresh,
-            ))
+            .spawn((chunk, NeedsRenderRefresh, NeedsPhysicsRefresh))
             .id();
         world.chunks.insert(coord, entity);
     }
 }
 
-fn chunk_loading_system(mut world: ResMut<World>, player_query: Query<&Transform, With<Player>>) {
+fn chunk_loading_system(
+    mut world: ResMut<World>,
+    player_query: Query<&Transform, With<Player>>,
+    save_state: Res<SaveState>,
+) {
     if let Ok(player_transform) = player_query.single() {
         let player_chunk = ChunkCoord::from_world_pos(player_transform.translation);
         let render_distance = render_distance_chunks();
@@ -379,7 +422,12 @@ fn chunk_loading_system(mut world: ResMut<World>, player_query: Query<&Transform
                 }
 
                 let coord = ChunkCoord::new(x, z);
-                queue_chunk_generation(&mut world, coord);
+                queue_chunk_generation(
+                    &mut world,
+                    coord,
+                    save_state.edited_chunks.clone(),
+                    save_state.seed,
+                );
             }
         }
     }
@@ -389,6 +437,8 @@ fn chunk_unloading_system(
     mut commands: Commands,
     mut world: ResMut<World>,
     player_query: Query<&Transform, With<Player>>,
+    chunk_query: Query<&Chunk>,
+    mut save_state: ResMut<SaveState>,
 ) {
     if let Ok(player_transform) = player_query.single() {
         let player_chunk = ChunkCoord::from_world_pos(player_transform.translation);
@@ -407,8 +457,121 @@ fn chunk_unloading_system(
         }
 
         for (coord, entity) in chunks_to_unload {
+            if let Ok(chunk) = chunk_query.get(entity) {
+                save_state.record_chunk_snapshot(chunk);
+            }
             commands.entity(entity).despawn();
             world.chunks.remove(&coord);
+        }
+    }
+}
+
+fn apply_edit_requests_system(
+    mut commands: Commands,
+    world: Res<World>,
+    mut chunk_query: Query<&mut Chunk>,
+    mut edit_requests: MessageReader<EditRequest>,
+    mut save_state: ResMut<SaveState>,
+    mut inventory: ResMut<Inventory>,
+) {
+    for request in edit_requests.read() {
+        let changed_positions = apply_edit_request(&world, &mut chunk_query, &mut inventory, request);
+        for world_pos in changed_positions {
+            mark_chunk_for_update(&mut commands, &world, world_pos);
+        }
+
+        if request.action == EditAction::Undo || request.action == EditAction::Redo {
+            save_state.dirty = true;
+            continue;
+        }
+
+        if request.action != EditAction::Preview && !request.positions.is_empty() {
+            save_state.dirty = true;
+        }
+    }
+}
+
+fn apply_edit_request(
+    world: &World,
+    chunk_query: &mut Query<&mut Chunk>,
+    inventory: &mut Inventory,
+    request: &EditRequest,
+) -> Vec<Vec3> {
+    let mut changed_positions = Vec::new();
+
+    for operation in &request.operations {
+        match operation.mode {
+            EditMode::Place => {
+                if operation.voxel_type == VoxelType::Air {
+                    continue;
+                }
+
+                if !inventory.try_remove(operation.voxel_type, 1) {
+                    continue;
+                }
+
+                if world.set_voxel_at_world(
+                    operation.position,
+                    Voxel::new(operation.voxel_type),
+                    chunk_query,
+                ) {
+                    changed_positions.push(operation.position);
+                } else {
+                    inventory.add(operation.voxel_type, 1);
+                }
+            }
+            EditMode::Break => {
+                if let Some(previous) = world.get_voxel_at_world(operation.position, &chunk_query.as_readonly()) {
+                    if previous.is_solid()
+                        && world.set_voxel_at_world(operation.position, Voxel::new(VoxelType::Air), chunk_query)
+                    {
+                        inventory.add(previous.voxel_type, 1);
+                        changed_positions.push(operation.position);
+                    }
+                }
+            }
+            EditMode::Paint => {
+                if let Some(existing) = world.get_voxel_at_world(operation.position, &chunk_query.as_readonly()) {
+                    if existing.is_solid()
+                        && world.set_voxel_at_world(
+                            operation.position,
+                            Voxel::new(operation.voxel_type),
+                            chunk_query,
+                        )
+                    {
+                        changed_positions.push(operation.position);
+                    }
+                }
+            }
+        }
+    }
+
+    changed_positions
+}
+
+pub fn mark_chunk_for_update(commands: &mut Commands, world: &World, world_pos: Vec3) {
+    if let Some((chunk_coord, voxel_x, _, voxel_z)) = world.world_to_voxel(world_pos) {
+        let mut dirty_chunks = bevy::platform::collections::HashSet::from([chunk_coord]);
+
+        if voxel_x == 0 {
+            dirty_chunks.insert(ChunkCoord::new(chunk_coord.x - 1, chunk_coord.z));
+        }
+        if voxel_x + 1 == CHUNK_VOXELS_SIZE {
+            dirty_chunks.insert(ChunkCoord::new(chunk_coord.x + 1, chunk_coord.z));
+        }
+        if voxel_z == 0 {
+            dirty_chunks.insert(ChunkCoord::new(chunk_coord.x, chunk_coord.z - 1));
+        }
+        if voxel_z + 1 == CHUNK_VOXELS_SIZE {
+            dirty_chunks.insert(ChunkCoord::new(chunk_coord.x, chunk_coord.z + 1));
+        }
+
+        for dirty_chunk in dirty_chunks {
+            if let Some(chunk_entity) = world.chunks.get(&dirty_chunk) {
+                commands
+                    .entity(*chunk_entity)
+                    .insert((NeedsRenderRefresh, NeedsPhysicsRefresh));
+            }
         }
     }
 }
