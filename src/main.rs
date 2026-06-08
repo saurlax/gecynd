@@ -26,7 +26,6 @@ pub enum AppState {
 
 fn main() {
     App::new()
-        .init_state::<AppState>()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "Gecynd".into(),
@@ -35,6 +34,7 @@ fn main() {
             exit_condition: ExitCondition::OnPrimaryClosed,
             ..default()
         }))
+        .init_state::<AppState>()
         .insert_resource(ClearColor(Color::srgb(0.53, 0.81, 0.98)))
         .add_plugins((
             SavePlugin,
