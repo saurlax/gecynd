@@ -10,8 +10,8 @@ use crate::player::{
 };
 use crate::voxel::{VOXEL_SIZE, VoxelFace, VoxelType};
 use crate::world::{
-    CHUNK_VOXELS_HEIGHT, CHUNK_VOXELS_SIZE, Chunk, DebugViewMode, chunk_world_height,
-    chunk_world_origin,
+    CHUNK_VOXELS_HEIGHT, CHUNK_VOXELS_SIZE, Chunk, ChunkCoord, DebugViewMode, World,
+    chunk_world_height, chunk_world_origin,
 };
 
 #[derive(Component)]
@@ -28,6 +28,20 @@ pub struct DebugAabb;
 
 #[derive(Component)]
 struct PendingRenderMesh(Task<(u64, Option<Mesh>)>);
+
+#[derive(Clone)]
+struct ChunkRenderInput {
+    chunk: Chunk,
+    neighbors: HorizontalChunkNeighbors,
+}
+
+#[derive(Clone, Default)]
+struct HorizontalChunkNeighbors {
+    negative_x: Option<Chunk>,
+    positive_x: Option<Chunk>,
+    negative_z: Option<Chunk>,
+    positive_z: Option<Chunk>,
+}
 
 pub struct RenderPlugin;
 
@@ -169,6 +183,7 @@ fn setup_voxel_highlight(
 
 fn queue_chunk_render_builds(
     mut commands: Commands,
+    world: Res<World>,
     chunk_query: Query<
         (Entity, &Chunk),
         (
@@ -176,13 +191,17 @@ fn queue_chunk_render_builds(
             Without<PendingRenderMesh>,
         ),
     >,
+    all_chunks: Query<&Chunk>,
 ) {
     let task_pool = AsyncComputeTaskPool::get();
 
     for (entity, chunk) in chunk_query.iter() {
-        let chunk = chunk.clone();
-        let revision = chunk.revision;
-        let task = task_pool.spawn(async move { (revision, generate_chunk_mesh(&chunk)) });
+        let input = ChunkRenderInput {
+            chunk: chunk.clone(),
+            neighbors: gather_horizontal_neighbors(chunk.coord, &world, &all_chunks),
+        };
+        let revision = input.chunk.revision;
+        let task = task_pool.spawn(async move { (revision, generate_chunk_mesh(&input)) });
         commands.entity(entity).insert(PendingRenderMesh(task));
     }
 }
@@ -521,7 +540,7 @@ fn create_debug_aabb_for_chunk(
     commands.entity(chunk_entity).add_child(debug_aabb_entity);
 }
 
-fn generate_chunk_mesh(chunk: &Chunk) -> Option<Mesh> {
+fn generate_chunk_mesh(input: &ChunkRenderInput) -> Option<Mesh> {
     let mut vertices = Vec::new();
     let mut indices = Vec::new();
     let mut normals = Vec::new();
@@ -531,7 +550,7 @@ fn generate_chunk_mesh(chunk: &Chunk) -> Option<Mesh> {
     for x in 0..CHUNK_VOXELS_SIZE {
         for y in 0..CHUNK_VOXELS_HEIGHT {
             for z in 0..CHUNK_VOXELS_SIZE {
-                if let Some(voxel) = chunk.get_voxel(x, y, z) {
+                if let Some(voxel) = input.chunk.get_voxel(x, y, z) {
                     if voxel.is_solid() {
                         let local_pos = Vec3::new(
                             x as f32 * VOXEL_SIZE,
@@ -547,7 +566,7 @@ fn generate_chunk_mesh(chunk: &Chunk) -> Option<Mesh> {
                             &mut colors,
                             local_pos,
                             voxel.voxel_type,
-                            chunk,
+                            input,
                             x,
                             y,
                             z,
@@ -614,34 +633,34 @@ fn add_voxel_faces(
     colors: &mut Vec<[f32; 4]>,
     pos: Vec3,
     voxel_type: VoxelType,
-    chunk: &Chunk,
+    input: &ChunkRenderInput,
     x: usize,
     y: usize,
     z: usize,
 ) {
     let faces = [
         (
-            should_render_face(chunk, x, y, z, -1, 0, 0),
+            should_render_face(input, x, y, z, -1, 0, 0),
             VoxelFace::NegativeX,
         ),
         (
-            should_render_face(chunk, x, y, z, 1, 0, 0),
+            should_render_face(input, x, y, z, 1, 0, 0),
             VoxelFace::PositiveX,
         ),
         (
-            should_render_face(chunk, x, y, z, 0, -1, 0),
+            should_render_face(input, x, y, z, 0, -1, 0),
             VoxelFace::NegativeY,
         ),
         (
-            should_render_face(chunk, x, y, z, 0, 1, 0),
+            should_render_face(input, x, y, z, 0, 1, 0),
             VoxelFace::PositiveY,
         ),
         (
-            should_render_face(chunk, x, y, z, 0, 0, -1),
+            should_render_face(input, x, y, z, 0, 0, -1),
             VoxelFace::NegativeZ,
         ),
         (
-            should_render_face(chunk, x, y, z, 0, 0, 1),
+            should_render_face(input, x, y, z, 0, 0, 1),
             VoxelFace::PositiveZ,
         ),
     ];
@@ -656,7 +675,7 @@ fn add_voxel_faces(
 }
 
 fn should_render_face(
-    chunk: &Chunk,
+    input: &ChunkRenderInput,
     x: usize,
     y: usize,
     z: usize,
@@ -668,21 +687,81 @@ fn should_render_face(
     let ny = y as i32 + dy;
     let nz = z as i32 + dz;
 
-    if nx < 0
-        || nx >= CHUNK_VOXELS_SIZE as i32
-        || ny < 0
-        || ny >= CHUNK_VOXELS_HEIGHT as i32
-        || nz < 0
-        || nz >= CHUNK_VOXELS_SIZE as i32
-    {
-        return true;
+    neighbor_voxel_for_face(input, nx, ny, nz).is_none_or(|voxel| !voxel.is_solid())
+}
+
+fn neighbor_voxel_for_face(
+    input: &ChunkRenderInput,
+    nx: i32,
+    ny: i32,
+    nz: i32,
+) -> Option<crate::voxel::Voxel> {
+    if ny < 0 || ny >= CHUNK_VOXELS_HEIGHT as i32 {
+        return None;
     }
 
-    if let Some(neighbor_voxel) = chunk.get_voxel(nx as usize, ny as usize, nz as usize) {
-        !neighbor_voxel.is_solid()
-    } else {
-        true
+    if (0..CHUNK_VOXELS_SIZE as i32).contains(&nx) && (0..CHUNK_VOXELS_SIZE as i32).contains(&nz) {
+        return input.chunk.get_voxel(nx as usize, ny as usize, nz as usize).copied();
     }
+
+    if nx < 0 {
+        return input
+            .neighbors
+            .negative_x
+            .as_ref()
+            .and_then(|chunk| chunk.get_voxel(CHUNK_VOXELS_SIZE - 1, ny as usize, nz as usize))
+            .copied();
+    }
+
+    if nx >= CHUNK_VOXELS_SIZE as i32 {
+        return input
+            .neighbors
+            .positive_x
+            .as_ref()
+            .and_then(|chunk| chunk.get_voxel(0, ny as usize, nz as usize))
+            .copied();
+    }
+
+    if nz < 0 {
+        return input
+            .neighbors
+            .negative_z
+            .as_ref()
+            .and_then(|chunk| chunk.get_voxel(nx as usize, ny as usize, CHUNK_VOXELS_SIZE - 1))
+            .copied();
+    }
+
+    if nz >= CHUNK_VOXELS_SIZE as i32 {
+        return input
+            .neighbors
+            .positive_z
+            .as_ref()
+            .and_then(|chunk| chunk.get_voxel(nx as usize, ny as usize, 0))
+            .copied();
+    }
+
+    None
+}
+
+fn gather_horizontal_neighbors(
+    coord: ChunkCoord,
+    world: &World,
+    chunk_query: &Query<&Chunk>,
+) -> HorizontalChunkNeighbors {
+    HorizontalChunkNeighbors {
+        negative_x: get_chunk_clone(ChunkCoord::new(coord.x - 1, coord.z), world, chunk_query),
+        positive_x: get_chunk_clone(ChunkCoord::new(coord.x + 1, coord.z), world, chunk_query),
+        negative_z: get_chunk_clone(ChunkCoord::new(coord.x, coord.z - 1), world, chunk_query),
+        positive_z: get_chunk_clone(ChunkCoord::new(coord.x, coord.z + 1), world, chunk_query),
+    }
+}
+
+fn get_chunk_clone(coord: ChunkCoord, world: &World, chunk_query: &Query<&Chunk>) -> Option<Chunk> {
+    world
+        .chunks
+        .get(&coord)
+        .and_then(|entity| chunk_query.get(*entity).ok())
+        .cloned()
 }
 
 fn add_face(
