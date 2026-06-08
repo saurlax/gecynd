@@ -2,6 +2,7 @@ use crate::voxel::{VOXEL_SIZE, VoxelFace};
 use crate::world::{
     CHUNK_VOXELS_HEIGHT, CHUNK_VOXELS_SIZE, Chunk, ChunkCoord, DebugViewMode, World,
 };
+use crate::AppState;
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task, futures_lite::future};
 use bevy_rapier3d::prelude::*;
@@ -31,9 +32,9 @@ impl Plugin for PhysicsPlugin {
             RapierPhysicsPlugin::<NoUserData>::default(),
             RapierDebugRenderPlugin::default().disabled(),
         ))
-        .add_systems(Update, sync_physics_debug_mode)
-        .add_systems(Update, queue_chunk_physics_builds)
-        .add_systems(Update, process_chunk_physics_builds);
+        .add_systems(Update, sync_physics_debug_mode.run_if(in_state(AppState::InGame)))
+        .add_systems(Update, queue_chunk_physics_builds.run_if(in_state(AppState::InGame)))
+        .add_systems(Update, process_chunk_physics_builds.run_if(in_state(AppState::InGame)));
     }
 }
 

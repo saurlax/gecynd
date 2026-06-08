@@ -9,6 +9,7 @@ use crate::player::{
 use crate::save::{SaveState, SavedChunk};
 use crate::terrain::{TERRAIN_MAX_HEIGHT_METERS, TerrainGenerator};
 use crate::voxel::{VOXEL_SIZE, Voxel, VoxelType};
+use crate::AppState;
 
 pub const CHUNK_SIZE: usize = 32;
 pub const CHUNK_HEIGHT: usize = 256;
@@ -238,7 +239,8 @@ impl Plugin for WorldPlugin {
             .init_resource::<DebugViewMode>()
             .init_resource::<InitialWorldGeneration>()
             .add_message::<EditRequest>()
-            .add_systems(Startup, start_initial_world_generation)
+            .add_systems(OnEnter(AppState::InGame), prepare_world_session)
+            .add_systems(OnEnter(AppState::InGame), start_initial_world_generation)
             .add_systems(
                 Update,
                 (
@@ -249,9 +251,21 @@ impl Plugin for WorldPlugin {
                     apply_edit_requests_system,
                     debug_view_mode_system,
                     debug_state_system,
-                ),
+                )
+                    .run_if(in_state(AppState::InGame)),
             );
     }
+}
+
+fn prepare_world_session(
+    mut world: ResMut<World>,
+    mut generation_state: ResMut<InitialWorldGeneration>,
+) {
+    world.chunks.clear();
+    world.pending_chunks.clear();
+    generation_state.started = false;
+    generation_state.finished = false;
+    generation_state.task = None;
 }
 
 fn queue_chunk_generation(

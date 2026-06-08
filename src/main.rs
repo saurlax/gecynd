@@ -17,8 +17,16 @@ use save::SavePlugin;
 use ui::UiPlugin;
 use world::WorldPlugin;
 
+#[derive(States, Default, Debug, Clone, Eq, PartialEq, Hash)]
+pub enum AppState {
+    #[default]
+    MainMenu,
+    InGame,
+}
+
 fn main() {
     App::new()
+        .init_state::<AppState>()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "Gecynd".into(),

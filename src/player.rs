@@ -5,6 +5,7 @@ use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow, WindowFocused};
 use bevy::{ecs::message::MessageReader, input::mouse::MouseMotion};
 use bevy_rapier3d::prelude::*;
 
+use crate::AppState;
 use crate::voxel::{VOXEL_SIZE, VoxelFace, VoxelType};
 use crate::world::{InitialWorldGeneration, World};
 
@@ -159,7 +160,8 @@ impl Plugin for PlayerPlugin {
                     sync_cursor_with_window_focus,
                     handle_cursor_grab,
                 )
-                    .chain(),
+                    .chain()
+                    .run_if(in_state(AppState::InGame)),
             )
             .add_systems(
                 Update,
@@ -168,11 +170,13 @@ impl Plugin for PlayerPlugin {
                     material_selection_input,
                     voxel_interaction,
                     voxel_selection,
-                ),
+                )
+                    .run_if(in_state(AppState::InGame)),
             )
             .add_systems(
                 FixedUpdate,
-                (player_movement, player_unstuck.after(player_movement)),
+                (player_movement, player_unstuck.after(player_movement))
+                    .run_if(in_state(AppState::InGame)),
             );
     }
 }

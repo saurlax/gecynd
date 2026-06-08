@@ -1,17 +1,20 @@
 use std::fs;
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task, futures_lite::future};
 use serde::{Deserialize, Serialize};
 
+use crate::AppState;
 use crate::player::{Inventory, Player};
 use crate::voxel::VoxelType;
 use crate::world::{Chunk, ChunkCoord};
 
 const SAVE_VERSION: u32 = 1;
 const DEFAULT_WORLD_SEED: u32 = 12345;
+pub const DEFAULT_SAVE_PATH: &str = "saves/world.json";
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct SavedChunk {
@@ -47,13 +50,12 @@ pub struct SaveState {
     pub edited_chunks: HashMap<ChunkCoord, SavedChunk>,
     pub loaded_player_translation: Vec3,
     pub dirty: bool,
-    pub autosave_timer: Timer,
     pub pending_write: Option<Task<Result<(), String>>>,
 }
 
 impl Default for SaveState {
     fn default() -> Self {
-        let path = PathBuf::from("saves/world.json");
+        let path = PathBuf::from(DEFAULT_SAVE_PATH);
         let loaded = load_world_save(&path);
 
         Self {
@@ -75,19 +77,52 @@ impl Default for SaveState {
                 .map(WorldSaveFile::player_translation)
                 .unwrap_or(Vec3::ZERO),
             dirty: false,
-            autosave_timer: Timer::from_seconds(2.0, TimerMode::Repeating),
             pending_write: None,
         }
     }
 }
 
 impl SaveState {
+    pub fn save_exists(&self) -> bool {
+        self.path.is_file()
+    }
+
     pub fn initial_player_translation(&self) -> Option<Vec3> {
         if self.loaded_player_translation == Vec3::ZERO {
             None
         } else {
             Some(self.loaded_player_translation)
         }
+    }
+
+    pub fn start_new_world(&mut self) {
+        self.version = SAVE_VERSION;
+        self.seed = fresh_world_seed();
+        self.edited_chunks.clear();
+        self.loaded_player_translation = Vec3::ZERO;
+        self.dirty = false;
+        self.pending_write = None;
+    }
+
+    pub fn load_existing_world(&mut self) -> bool {
+        let Some(loaded) = load_world_save(&self.path) else {
+            return false;
+        };
+        let player_translation = loaded.player_translation();
+        let version = loaded.version;
+        let seed = loaded.seed;
+
+        self.version = version;
+        self.seed = seed;
+        self.edited_chunks = loaded
+            .edited_chunks
+            .into_iter()
+            .map(|chunk| (chunk.coord, chunk))
+            .collect();
+        self.loaded_player_translation = player_translation;
+        self.dirty = false;
+        self.pending_write = None;
+        true
     }
 
     pub fn record_chunk_snapshot(&mut self, chunk: &Chunk) {
@@ -119,7 +154,8 @@ pub struct SavePlugin;
 impl Plugin for SavePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<SaveState>()
-            .add_systems(Update, autosave_world_system);
+            .add_systems(Update, process_pending_save_task.run_if(in_state(AppState::InGame)))
+            .add_systems(Update, manual_save_input_system.run_if(in_state(AppState::InGame)));
     }
 }
 
@@ -150,35 +186,32 @@ fn load_world_save(path: &PathBuf) -> Option<WorldSaveFile> {
     Some(save)
 }
 
-fn autosave_world_system(
-    time: Res<Time>,
+fn process_pending_save_task(mut save_state: ResMut<SaveState>) {
+    let Some(task) = save_state.pending_write.as_mut() else {
+        return;
+    };
+
+    if let Some(result) = future::block_on(future::poll_once(task)) {
+        match result {
+            Ok(()) => save_state.dirty = false,
+            Err(error) => warn!("Failed to save world: {error}"),
+        }
+        save_state.pending_write = None;
+    }
+}
+
+fn manual_save_input_system(
+    keyboard_input: Res<ButtonInput<KeyCode>>,
     mut save_state: ResMut<SaveState>,
     player_query: Query<&Transform, With<Player>>,
     chunk_query: Query<&Chunk>,
     inventory: Res<Inventory>,
 ) {
-    if let Some(task) = save_state.pending_write.as_mut() {
-        if let Some(result) = future::block_on(future::poll_once(task)) {
-            match result {
-                Ok(()) => save_state.dirty = false,
-                Err(error) => warn!("Failed to save world: {error}"),
-            }
-            save_state.pending_write = None;
-        }
+    if !keyboard_input.just_pressed(KeyCode::F5) || save_state.pending_write.is_some() {
         return;
     }
 
-    save_state.autosave_timer.tick(time.delta());
-    if !save_state.dirty || !save_state.autosave_timer.just_finished() {
-        return;
-    }
-
-    let save_payload = build_save_payload(&save_state, &player_query, &chunk_query, &inventory);
-    let save_path = save_state.path.clone();
-    let task_pool = AsyncComputeTaskPool::get();
-    save_state.pending_write = Some(task_pool.spawn(async move {
-        write_save_payload(save_path, save_payload)
-    }));
+    queue_manual_save(&mut save_state, &player_query, &chunk_query, &inventory);
 }
 
 fn build_save_payload(
@@ -230,4 +263,25 @@ fn write_save_payload(path: PathBuf, save_file: WorldSaveFile) -> Result<(), Str
     let payload = serde_json::to_vec_pretty(&save_file).map_err(|error| error.to_string())?;
     fs::write(path, payload).map_err(|error| error.to_string())?;
     Ok(())
+}
+
+pub fn queue_manual_save(
+    save_state: &mut SaveState,
+    player_query: &Query<&Transform, With<Player>>,
+    chunk_query: &Query<&Chunk>,
+    inventory: &Inventory,
+) {
+    let save_payload = build_save_payload(save_state, player_query, chunk_query, inventory);
+    let save_path = save_state.path.clone();
+    let task_pool = AsyncComputeTaskPool::get();
+    save_state.pending_write = Some(task_pool.spawn(async move {
+        write_save_payload(save_path, save_payload)
+    }));
+}
+
+fn fresh_world_seed() -> u32 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs() as u32 ^ duration.subsec_nanos())
+        .unwrap_or(DEFAULT_WORLD_SEED)
 }

@@ -11,6 +11,7 @@ use crate::world::{
     CHUNK_VOXELS_HEIGHT, CHUNK_VOXELS_SIZE, Chunk, ChunkCoord, DebugViewMode, World,
     chunk_world_height, chunk_world_origin,
 };
+use crate::AppState;
 
 #[derive(Component)]
 pub struct ChunkMesh;
@@ -52,7 +53,7 @@ impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(WireframePlugin::default())
             .add_systems(
-                Startup,
+                OnEnter(AppState::InGame),
                 (
                     setup_lighting,
                     setup_chunk_material,
@@ -68,7 +69,8 @@ impl Plugin for RenderPlugin {
                     process_chunk_render_builds.before(debug_aabb_system),
                     voxel_highlight_system,
                     debug_aabb_system,
-                ),
+                )
+                    .run_if(in_state(AppState::InGame)),
             );
     }
 }

@@ -1,16 +1,37 @@
+use bevy::prelude::*;
+
 use crate::player::{Inventory, Player, PlayerInteraction};
+use crate::save::{DEFAULT_SAVE_PATH, SaveState};
 use crate::voxel::VoxelType;
 use crate::world::InitialWorldGeneration;
-use bevy::prelude::*;
+use crate::AppState;
+
+const NORMAL_BUTTON: Color = Color::srgb(0.18, 0.20, 0.18);
+const HOVERED_BUTTON: Color = Color::srgb(0.28, 0.31, 0.28);
+const PRESSED_BUTTON: Color = Color::srgb(0.36, 0.46, 0.36);
+const DISABLED_BUTTON: Color = Color::srgb(0.12, 0.12, 0.12);
 
 pub struct UiPlugin;
 
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, setup_ui)
-            .add_systems(Update, update_ui_text);
+        app.add_systems(OnEnter(AppState::MainMenu), setup_main_menu)
+            .add_systems(OnExit(AppState::MainMenu), cleanup_main_menu)
+            .add_systems(
+                Update,
+                (main_menu_button_visuals, main_menu_actions).run_if(in_state(AppState::MainMenu)),
+            )
+            .add_systems(OnEnter(AppState::InGame), setup_hud)
+            .add_systems(OnExit(AppState::InGame), cleanup_hud)
+            .add_systems(Update, update_hud_text.run_if(in_state(AppState::InGame)));
     }
 }
+
+#[derive(Component)]
+struct MainMenuRoot;
+
+#[derive(Component)]
+struct HudRoot;
 
 #[derive(Component)]
 struct PlayerInfoText;
@@ -22,20 +43,218 @@ struct SelectedBlockText;
 struct SelectedMaterialText;
 
 #[derive(Component)]
-struct BrushSettingsText;
+struct ModeText;
 
 #[derive(Component)]
 struct InventoryText;
 
 #[derive(Component)]
-struct LoadingText;
-
-#[derive(Component)]
 struct LoadingRoot;
 
-fn setup_ui(mut commands: Commands) {
+#[derive(Component)]
+struct MainMenuButton {
+    action: MainMenuAction,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MainMenuAction {
+    NewSave,
+    LoadSave,
+}
+
+fn setup_main_menu(mut commands: Commands, save_state: Res<SaveState>) {
     commands
         .spawn((
+            MainMenuRoot,
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                padding: UiRect::all(Val::Px(28.0)),
+                ..default()
+            },
+            BackgroundColor(Color::srgb(0.08, 0.10, 0.08)),
+        ))
+        .with_children(|parent| {
+            parent
+                .spawn((
+                    Node {
+                        width: Val::Px(520.0),
+                        max_width: Val::Percent(100.0),
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(14.0),
+                        padding: UiRect::all(Val::Px(24.0)),
+                        border: UiRect::all(Val::Px(2.0)),
+                        ..default()
+                    },
+                    BorderColor::all(Color::srgb(0.22, 0.28, 0.22)),
+                    BackgroundColor(Color::srgb(0.14, 0.17, 0.14)),
+                ))
+                .with_children(|card| {
+                    card.spawn((
+                        Text::new("Gecynd"),
+                        TextFont {
+                            font_size: 42.0,
+                            ..default()
+                        },
+                        TextColor(Color::WHITE),
+                    ));
+
+                    card.spawn((
+                        Text::new("Survival sandbox prototype"),
+                        TextFont {
+                            font_size: 20.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.82, 0.86, 0.82)),
+                    ));
+
+                    card.spawn((
+                        Text::new(format!("Default save path: {DEFAULT_SAVE_PATH}")),
+                        TextFont {
+                            font_size: 18.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.72, 0.78, 0.72)),
+                    ));
+
+                    card.spawn((
+                        Text::new(if save_state.save_exists() {
+                            "Existing save detected. You can continue it or start a new world."
+                        } else {
+                            "No save file found yet. Start a new world to create one."
+                        }),
+                        TextFont {
+                            font_size: 18.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.72, 0.78, 0.72)),
+                    ));
+
+                    spawn_menu_button(card, "New Save", MainMenuAction::NewSave, true);
+                    spawn_menu_button(
+                        card,
+                        "Load Save",
+                        MainMenuAction::LoadSave,
+                        save_state.save_exists(),
+                    );
+                });
+        });
+}
+
+fn spawn_menu_button(
+    parent: &mut ChildSpawnerCommands,
+    label: &str,
+    action: MainMenuAction,
+    enabled: bool,
+) {
+    parent
+        .spawn((
+            Button,
+            MainMenuButton { action },
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Px(56.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                border: UiRect::all(Val::Px(1.0)),
+                ..default()
+            },
+            BackgroundColor(if enabled { NORMAL_BUTTON } else { DISABLED_BUTTON }),
+            BorderColor::all(if enabled {
+                Color::srgb(0.28, 0.34, 0.28)
+            } else {
+                Color::srgb(0.16, 0.16, 0.16)
+            }),
+            InteractionDisabled(!enabled),
+        ))
+        .with_children(|button| {
+            button.spawn((
+                Text::new(label),
+                TextFont {
+                    font_size: 22.0,
+                    ..default()
+                },
+                TextColor(if enabled {
+                    Color::WHITE
+                } else {
+                    Color::srgb(0.55, 0.55, 0.55)
+                }),
+            ));
+        });
+}
+
+#[derive(Component)]
+struct InteractionDisabled(bool);
+
+fn cleanup_main_menu(mut commands: Commands, root_query: Query<Entity, With<MainMenuRoot>>) {
+    for entity in root_query.iter() {
+        commands.entity(entity).despawn();
+    }
+}
+
+fn main_menu_button_visuals(
+    mut button_query: Query<
+        (&Interaction, &InteractionDisabled, &mut BackgroundColor, &mut BorderColor),
+        (Changed<Interaction>, With<Button>, With<MainMenuButton>),
+    >,
+) {
+    for (interaction, disabled, mut background, mut border) in &mut button_query {
+        if disabled.0 {
+            *background = DISABLED_BUTTON.into();
+            *border = BorderColor::all(Color::srgb(0.16, 0.16, 0.16));
+            continue;
+        }
+
+        match *interaction {
+            Interaction::Pressed => {
+                *background = PRESSED_BUTTON.into();
+                *border = BorderColor::all(Color::WHITE);
+            }
+            Interaction::Hovered => {
+                *background = HOVERED_BUTTON.into();
+                *border = BorderColor::all(Color::WHITE);
+            }
+            Interaction::None => {
+                *background = NORMAL_BUTTON.into();
+                *border = BorderColor::all(Color::srgb(0.28, 0.34, 0.28));
+            }
+        }
+    }
+}
+
+fn main_menu_actions(
+    mut interaction_query: Query<
+        (&Interaction, &MainMenuButton, &InteractionDisabled),
+        (Changed<Interaction>, With<Button>),
+    >,
+    mut save_state: ResMut<SaveState>,
+    mut next_state: ResMut<NextState<AppState>>,
+) {
+    for (interaction, button, disabled) in &mut interaction_query {
+        if *interaction != Interaction::Pressed || disabled.0 {
+            continue;
+        }
+
+        match button.action {
+            MainMenuAction::NewSave => {
+                save_state.start_new_world();
+                next_state.set(AppState::InGame);
+            }
+            MainMenuAction::LoadSave => {
+                if save_state.load_existing_world() {
+                    next_state.set(AppState::InGame);
+                }
+            }
+        }
+    }
+}
+
+fn setup_hud(mut commands: Commands) {
+    commands
+        .spawn((
+            HudRoot,
             Node {
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
@@ -85,13 +304,13 @@ fn setup_ui(mut commands: Commands) {
             ));
 
             parent.spawn((
-                Text::new("Mode: Survival block interaction"),
+                Text::new("Mode: Survival block interaction | F5 to save"),
                 TextFont {
                     font_size: 18.0,
                     ..default()
                 },
                 TextColor(Color::WHITE),
-                BrushSettingsText,
+                ModeText,
                 Node {
                     margin: UiRect::top(Val::Px(5.0)),
                     ..default()
@@ -127,6 +346,7 @@ fn setup_ui(mut commands: Commands) {
                         "Left Click: Break Block",
                         "Right Click: Place Block",
                         "1/2/3: Select Grass/Dirt/Stone",
+                        "F5: Save World",
                         "Shift: Sprint",
                         "F1: Toggle AABB Debug",
                         "F2: Toggle Render Wireframe",
@@ -161,7 +381,6 @@ fn setup_ui(mut commands: Commands) {
         ))
         .with_children(|parent| {
             parent.spawn((
-                LoadingText,
                 Text::new("Generating terrain..."),
                 TextFont {
                     font_size: 36.0,
@@ -172,7 +391,16 @@ fn setup_ui(mut commands: Commands) {
         });
 }
 
-fn update_ui_text(
+fn cleanup_hud(
+    mut commands: Commands,
+    hud_query: Query<Entity, Or<(With<HudRoot>, With<LoadingRoot>)>>,
+) {
+    for entity in hud_query.iter() {
+        commands.entity(entity).despawn();
+    }
+}
+
+fn update_hud_text(
     player_query: Query<&Transform, With<Player>>,
     interaction: Res<PlayerInteraction>,
     inventory: Res<Inventory>,
@@ -184,7 +412,7 @@ fn update_ui_text(
         Query<&mut Text, With<PlayerInfoText>>,
         Query<&mut Text, With<SelectedBlockText>>,
         Query<&mut Text, With<SelectedMaterialText>>,
-        Query<&mut Text, With<BrushSettingsText>>,
+        Query<&mut Text, With<ModeText>>,
         Query<&mut Text, With<InventoryText>>,
     )>,
 ) {
@@ -241,7 +469,10 @@ fn update_ui_text(
     }
 
     if let Ok(mut text) = text_queries.p3().single_mut() {
-        **text = "Mode: Survival block interaction".to_string();
+        **text = format!(
+            "Mode: Survival block interaction | F5 to save | Save path: {}",
+            DEFAULT_SAVE_PATH
+        );
     }
 
     if let Ok(mut text) = text_queries.p4().single_mut() {
