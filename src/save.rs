@@ -39,6 +39,7 @@ pub struct SaveState {
     pub version: u32,
     pub seed: u32,
     pub edited_chunks: HashMap<ChunkCoord, SavedChunk>,
+    pub dirty_chunks: HashMap<ChunkCoord, SavedChunk>,
     pub loaded_player_translation: Vec3,
     pub loaded_inventory: Inventory,
     pub dirty: bool,
@@ -71,6 +72,7 @@ impl Default for SaveState {
             version: metadata.version,
             seed: metadata.seed,
             edited_chunks,
+            dirty_chunks: HashMap::default(),
             loaded_player_translation: Vec3::from_array(metadata.player_translation),
             loaded_inventory: inventory,
             dirty: false,
@@ -96,6 +98,7 @@ impl SaveState {
         self.version = SAVE_VERSION;
         self.seed = fresh_world_seed();
         self.edited_chunks.clear();
+        self.dirty_chunks.clear();
         self.loaded_player_translation = Vec3::ZERO;
         self.loaded_inventory = Inventory::default();
         self.dirty = false;
@@ -116,6 +119,7 @@ impl SaveState {
         self.version = metadata.version;
         self.seed = metadata.seed;
         self.edited_chunks = edited_chunks;
+        self.dirty_chunks.clear();
         self.loaded_player_translation = Vec3::from_array(metadata.player_translation);
         self.loaded_inventory = inventory;
         self.dirty = false;
@@ -125,13 +129,12 @@ impl SaveState {
 
     pub fn record_chunk_snapshot(&mut self, chunk: &Chunk) {
         if chunk.modified {
-            self.edited_chunks.insert(
-                chunk.coord,
-                SavedChunk {
-                    coord: chunk.coord,
-                    voxels: chunk.voxels.iter().map(|voxel| voxel.voxel_type).collect(),
-                },
-            );
+            let snapshot = SavedChunk {
+                coord: chunk.coord,
+                voxels: chunk.voxels.iter().map(|voxel| voxel.voxel_type).collect(),
+            };
+            self.edited_chunks.insert(chunk.coord, snapshot.clone());
+            self.dirty_chunks.insert(chunk.coord, snapshot);
             self.dirty = true;
         }
     }
@@ -181,7 +184,10 @@ fn process_pending_save_task(mut save_state: ResMut<SaveState>) {
 
     if let Some(result) = future::block_on(future::poll_once(task)) {
         match result {
-            Ok(()) => save_state.dirty = false,
+            Ok(()) => {
+                save_state.dirty = false;
+                save_state.dirty_chunks.clear();
+            }
             Err(error) => warn!("Failed to save world: {error}"),
         }
         save_state.pending_write = None;
@@ -213,18 +219,18 @@ fn build_save_snapshot(
         .map(|transform| transform.translation)
         .unwrap_or(Vec3::ZERO);
 
-    let mut edited_chunks: Vec<SavedChunk> = save_state.edited_chunks.values().cloned().collect();
+    let mut dirty_chunks = save_state.dirty_chunks.values().cloned().collect::<Vec<_>>();
     for chunk in chunk_query.iter() {
         if chunk.modified {
-            edited_chunks.retain(|saved| saved.coord != chunk.coord);
-            edited_chunks.push(SavedChunk {
+            dirty_chunks.retain(|saved| saved.coord != chunk.coord);
+            dirty_chunks.push(SavedChunk {
                 coord: chunk.coord,
                 voxels: chunk.voxels.iter().map(|voxel| voxel.voxel_type).collect(),
             });
         }
     }
 
-    edited_chunks.sort_by_key(|chunk| (chunk.coord.x, chunk.coord.z));
+    dirty_chunks.sort_by_key(|chunk| (chunk.coord.x, chunk.coord.z));
 
     (
         WorldMetadata {
@@ -233,7 +239,7 @@ fn build_save_snapshot(
             player_translation: player_translation.to_array(),
             inventory: inventory.entries(),
         },
-        edited_chunks,
+        dirty_chunks,
     )
 }
 
@@ -254,7 +260,7 @@ pub fn queue_manual_save(
 fn write_world_directory(
     root: &Path,
     metadata: WorldMetadata,
-    chunks: Vec<SavedChunk>,
+    dirty_chunks: Vec<SavedChunk>,
 ) -> Result<(), String> {
     fs::create_dir_all(root).map_err(|error| error.to_string())?;
     let chunks_dir = root.join("chunks");
@@ -262,17 +268,7 @@ fn write_world_directory(
 
     write_world_metadata(&root.join("world.meta"), &metadata)?;
 
-    let existing_files = fs::read_dir(&chunks_dir)
-        .map_err(|error| error.to_string())?
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .collect::<Vec<_>>();
-    for path in existing_files {
-        if path.is_file() {
-            fs::remove_file(path).map_err(|error| error.to_string())?;
-        }
-    }
-
-    for chunk in chunks {
+    for chunk in dirty_chunks {
         let chunk_path = chunk_file_path(&chunks_dir, chunk.coord);
         write_chunk_file(&chunk_path, &chunk)?;
     }
