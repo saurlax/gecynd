@@ -32,9 +32,21 @@ impl Plugin for PhysicsPlugin {
             RapierPhysicsPlugin::<NoUserData>::default(),
             RapierDebugRenderPlugin::default().disabled(),
         ))
-        .add_systems(Update, sync_physics_debug_mode.run_if(in_state(AppState::InGame)))
-        .add_systems(Update, queue_chunk_physics_builds.run_if(in_state(AppState::InGame)))
-        .add_systems(Update, process_chunk_physics_builds.run_if(in_state(AppState::InGame)));
+        .add_systems(
+            Update,
+            sync_physics_debug_mode
+                .run_if(in_state(AppState::LoadingWorld).or(in_state(AppState::InGame))),
+        )
+        .add_systems(
+            Update,
+            queue_chunk_physics_builds
+                .run_if(in_state(AppState::LoadingWorld).or(in_state(AppState::InGame))),
+        )
+        .add_systems(
+            Update,
+            process_chunk_physics_builds
+                .run_if(in_state(AppState::LoadingWorld).or(in_state(AppState::InGame))),
+        );
     }
 }
 

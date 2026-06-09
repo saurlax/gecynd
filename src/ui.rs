@@ -22,6 +22,12 @@ impl Plugin for UiPlugin {
                 Update,
                 (main_menu_button_visuals, main_menu_actions).run_if(in_state(AppState::MainMenu)),
             )
+            .add_systems(OnEnter(AppState::LoadingWorld), setup_loading_screen)
+            .add_systems(OnExit(AppState::LoadingWorld), cleanup_loading_screen)
+            .add_systems(
+                Update,
+                update_loading_screen.run_if(in_state(AppState::LoadingWorld)),
+            )
             .add_systems(OnEnter(AppState::InGame), setup_hud)
             .add_systems(OnExit(AppState::InGame), cleanup_hud)
             .add_systems(Update, update_hud_text.run_if(in_state(AppState::InGame)));
@@ -279,11 +285,11 @@ fn main_menu_actions(
         match button.action {
             MainMenuAction::NewSave => {
                 save_state.start_new_world();
-                next_state.set(AppState::InGame);
+                next_state.set(AppState::LoadingWorld);
             }
             MainMenuAction::LoadSave => {
                 if save_state.load_existing_world() {
-                    next_state.set(AppState::InGame);
+                    next_state.set(AppState::LoadingWorld);
                 }
             }
         }
@@ -405,11 +411,22 @@ fn setup_hud(mut commands: Commands) {
                 });
         });
 
+}
+
+fn cleanup_hud(
+    mut commands: Commands,
+    hud_query: Query<Entity, With<HudRoot>>,
+) {
+    for entity in hud_query.iter() {
+        commands.entity(entity).despawn();
+    }
+}
+
+fn setup_loading_screen(mut commands: Commands) {
     commands
         .spawn((
             LoadingRoot,
             Node {
-                position_type: PositionType::Absolute,
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
                 justify_content: JustifyContent::Center,
@@ -417,7 +434,7 @@ fn setup_hud(mut commands: Commands) {
                 padding: UiRect::all(Val::Px(24.0)),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45)),
+            BackgroundColor(Color::srgb(0.36, 0.62, 0.92)),
         ))
         .with_children(|parent| {
             parent
@@ -488,12 +505,34 @@ fn setup_hud(mut commands: Commands) {
         });
 }
 
-fn cleanup_hud(
-    mut commands: Commands,
-    hud_query: Query<Entity, Or<(With<HudRoot>, With<LoadingRoot>)>>,
-) {
-    for entity in hud_query.iter() {
+fn cleanup_loading_screen(mut commands: Commands, root_query: Query<Entity, With<LoadingRoot>>) {
+    for entity in root_query.iter() {
         commands.entity(entity).despawn();
+    }
+}
+
+fn update_loading_screen(
+    generation_state: Res<InitialWorldGeneration>,
+    mut text_queries: ParamSet<(
+        Query<&mut Text, With<LoadingText>>,
+        Query<&mut Node, With<LoadingProgressFill>>,
+    )>,
+) {
+    if let Ok(mut text) = text_queries.p0().single_mut() {
+        **text = format!(
+            "Generating terrain... {} / {}",
+            generation_state.completed_chunks,
+            generation_state.total_chunks
+        );
+    }
+
+    if let Ok(mut node) = text_queries.p1().single_mut() {
+        let progress = if generation_state.total_chunks == 0 {
+            0.0
+        } else {
+            generation_state.completed_chunks as f32 / generation_state.total_chunks as f32
+        };
+        node.width = Val::Percent((progress * 100.0).clamp(0.0, 100.0));
     }
 }
 
@@ -502,43 +541,14 @@ fn update_hud_text(
     interaction: Res<PlayerInteraction>,
     inventory: Res<Inventory>,
     world: Res<crate::world::World>,
-    generation_state: Res<InitialWorldGeneration>,
-    loading_root_query: Query<Entity, With<LoadingRoot>>,
-    mut commands: Commands,
     mut text_queries: ParamSet<(
         Query<&mut Text, With<PlayerInfoText>>,
         Query<&mut Text, With<SelectedBlockText>>,
         Query<&mut Text, With<SelectedMaterialText>>,
         Query<&mut Text, With<ModeText>>,
         Query<&mut Text, With<InventoryText>>,
-        Query<&mut Text, With<LoadingText>>,
-        Query<&mut Node, With<LoadingProgressFill>>,
     )>,
 ) {
-    if generation_state.finished {
-        if let Ok(entity) = loading_root_query.single() {
-            commands.entity(entity).despawn_children();
-            commands.entity(entity).despawn();
-        }
-    } else {
-        if let Ok(mut text) = text_queries.p5().single_mut() {
-            **text = format!(
-                "Generating terrain... {} / {}",
-                generation_state.completed_chunks,
-                generation_state.total_chunks
-            );
-        }
-
-        if let Ok(mut node) = text_queries.p6().single_mut() {
-            let progress = if generation_state.total_chunks == 0 {
-                0.0
-            } else {
-                generation_state.completed_chunks as f32 / generation_state.total_chunks as f32
-            };
-            node.width = Val::Percent((progress * 100.0).clamp(0.0, 100.0));
-        }
-    }
-
     if let Ok(player_transform) = player_query.single() {
         if let Ok(mut text) = text_queries.p0().single_mut() {
             let pos = player_transform.translation;

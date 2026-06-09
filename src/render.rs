@@ -53,7 +53,7 @@ impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(WireframePlugin::default())
             .add_systems(
-                OnEnter(AppState::InGame),
+                OnEnter(AppState::LoadingWorld),
                 (
                     setup_lighting,
                     setup_chunk_material,
@@ -70,7 +70,7 @@ impl Plugin for RenderPlugin {
                     voxel_highlight_system,
                     debug_aabb_system,
                 )
-                    .run_if(in_state(AppState::InGame)),
+                    .run_if(in_state(AppState::LoadingWorld).or(in_state(AppState::InGame))),
             );
     }
 }

@@ -141,6 +141,7 @@ pub struct InitialWorldGeneration {
     pub total_chunks: usize,
     pub completed_chunks: usize,
     pub target_chunks: HashSet<ChunkCoord>,
+    pub spawn_position: Option<Vec3>,
 }
 
 impl Default for InitialWorldGeneration {
@@ -151,6 +152,7 @@ impl Default for InitialWorldGeneration {
             total_chunks: 0,
             completed_chunks: 0,
             target_chunks: HashSet::default(),
+            spawn_position: None,
         }
     }
 }
@@ -243,13 +245,20 @@ impl Plugin for WorldPlugin {
             .init_resource::<DebugViewMode>()
             .init_resource::<InitialWorldGeneration>()
             .add_message::<EditRequest>()
-            .add_systems(OnEnter(AppState::InGame), prepare_world_session)
-            .add_systems(OnEnter(AppState::InGame), start_initial_world_generation)
+            .add_systems(OnEnter(AppState::LoadingWorld), prepare_world_session)
+            .add_systems(OnEnter(AppState::LoadingWorld), start_initial_world_generation)
+            .add_systems(OnEnter(AppState::InGame), finish_world_loading)
             .add_systems(
                 Update,
                 (
-                    complete_initial_world_generation,
                     complete_pending_chunk_generation_system,
+                    complete_initial_world_generation,
+                )
+                    .run_if(in_state(AppState::LoadingWorld)),
+            )
+            .add_systems(
+                Update,
+                (
                     chunk_loading_system,
                     chunk_unloading_system,
                     apply_edit_requests_system,
@@ -259,6 +268,21 @@ impl Plugin for WorldPlugin {
                     .run_if(in_state(AppState::InGame)),
             );
     }
+}
+
+fn finish_world_loading(
+    mut commands: Commands,
+    generation_state: Res<InitialWorldGeneration>,
+    save_state: Res<SaveState>,
+    mut inventory: ResMut<Inventory>,
+) {
+    *inventory = crate::save::load_inventory_from_save(&save_state);
+    spawn_player(
+        &mut commands,
+        generation_state
+            .spawn_position
+            .unwrap_or_else(initial_player_spawn_position),
+    );
 }
 
 fn prepare_world_session(
@@ -272,6 +296,7 @@ fn prepare_world_session(
     generation_state.total_chunks = 0;
     generation_state.completed_chunks = 0;
     generation_state.target_chunks.clear();
+    generation_state.spawn_position = None;
 }
 
 fn queue_chunk_generation(
@@ -345,34 +370,28 @@ fn start_initial_world_generation(
     generation_state.total_chunks = target_chunks.len();
     generation_state.completed_chunks = 0;
     generation_state.target_chunks = target_chunks;
+    generation_state.spawn_position = Some(spawn_position);
 }
 
 fn complete_initial_world_generation(
-    mut commands: Commands,
+    mut next_state: ResMut<NextState<AppState>>,
     mut generation_state: ResMut<InitialWorldGeneration>,
-    save_state: Res<SaveState>,
-    mut inventory: ResMut<Inventory>,
 ) {
     if generation_state.finished {
         return;
     }
 
-    if !generation_state.started || generation_state.total_chunks == 0 {
+    if !generation_state.started {
         return;
     }
 
-    if generation_state.completed_chunks < generation_state.total_chunks {
+    if generation_state.total_chunks == 0 || generation_state.completed_chunks < generation_state.total_chunks
+    {
         return;
     }
 
-    *inventory = crate::save::load_inventory_from_save(&save_state);
-    spawn_player(
-        &mut commands,
-        save_state
-            .initial_player_translation()
-            .unwrap_or_else(initial_player_spawn_position),
-    );
     generation_state.finished = true;
+    next_state.set(AppState::InGame);
 }
 
 fn complete_pending_chunk_generation_system(

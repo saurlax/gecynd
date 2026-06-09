@@ -21,6 +21,7 @@ use world::WorldPlugin;
 pub enum AppState {
     #[default]
     MainMenu,
+    LoadingWorld,
     InGame,
 }
 
