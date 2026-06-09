@@ -245,13 +245,14 @@ impl Plugin for WorldPlugin {
             .init_resource::<DebugViewMode>()
             .init_resource::<InitialWorldGeneration>()
             .add_message::<EditRequest>()
-            .add_systems(OnEnter(AppState::LoadingWorld), prepare_world_session)
-            .add_systems(OnEnter(AppState::LoadingWorld), start_initial_world_generation)
+            .add_systems(
+                OnEnter(AppState::LoadingWorld),
+                (prepare_world_session, start_initial_world_generation).chain(),
+            )
             .add_systems(OnEnter(AppState::InGame), finish_world_loading)
             .add_systems(
                 Update,
                 (
-                    complete_pending_chunk_generation_system,
                     complete_initial_world_generation,
                 )
                     .run_if(in_state(AppState::LoadingWorld)),
@@ -259,6 +260,7 @@ impl Plugin for WorldPlugin {
             .add_systems(
                 Update,
                 (
+                    complete_pending_chunk_generation_system,
                     chunk_loading_system,
                     chunk_unloading_system,
                     apply_edit_requests_system,
@@ -341,7 +343,24 @@ fn start_initial_world_generation(
     let spawn_position = save_state
         .initial_player_translation()
         .unwrap_or_else(initial_player_spawn_position);
-    let spawn_chunk = ChunkCoord::from_world_pos(spawn_position);
+    let target_chunks = initial_target_chunks(ChunkCoord::from_world_pos(spawn_position));
+
+    for &coord in &target_chunks {
+        queue_chunk_generation(
+            &mut world,
+            coord,
+            save_state.edited_chunks.get(&coord).cloned(),
+            save_state.seed,
+        );
+    }
+
+    generation_state.total_chunks = target_chunks.len();
+    generation_state.completed_chunks = 0;
+    generation_state.target_chunks = target_chunks;
+    generation_state.spawn_position = Some(spawn_position);
+}
+
+fn initial_target_chunks(spawn_chunk: ChunkCoord) -> HashSet<ChunkCoord> {
     let mut target_chunks = HashSet::default();
 
     for x in
@@ -356,21 +375,11 @@ fn start_initial_world_generation(
                 continue;
             }
 
-            let coord = ChunkCoord::new(x, z);
-            target_chunks.insert(coord);
-            queue_chunk_generation(
-                &mut world,
-                coord,
-                save_state.edited_chunks.get(&coord).cloned(),
-                save_state.seed,
-            );
+            target_chunks.insert(ChunkCoord::new(x, z));
         }
     }
 
-    generation_state.total_chunks = target_chunks.len();
-    generation_state.completed_chunks = 0;
-    generation_state.target_chunks = target_chunks;
-    generation_state.spawn_position = Some(spawn_position);
+    target_chunks
 }
 
 fn complete_initial_world_generation(
@@ -553,6 +562,53 @@ fn apply_edit_request(
     }
 
     changed_positions
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::player::Inventory;
+    use crate::save::SaveState;
+    use bevy::state::app::StatesPlugin;
+
+    #[test]
+    fn initial_target_chunks_cover_expected_radius() {
+        let coords = initial_target_chunks(ChunkCoord::new(0, 0));
+
+        assert_eq!(coords.len(), 29);
+        assert!(coords.contains(&ChunkCoord::new(0, 0)));
+        assert!(coords.contains(&ChunkCoord::new(3, 0)));
+        assert!(coords.contains(&ChunkCoord::new(0, -3)));
+        assert!(!coords.contains(&ChunkCoord::new(3, 3)));
+    }
+
+    #[test]
+    fn entering_loading_world_queues_initial_chunks() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_plugins(StatesPlugin)
+            .init_state::<AppState>()
+            .init_resource::<SaveState>()
+            .init_resource::<Inventory>()
+            .init_resource::<ButtonInput<KeyCode>>()
+            .add_plugins(WorldPlugin);
+
+        app.world_mut()
+            .resource_mut::<NextState<AppState>>()
+            .set(AppState::LoadingWorld);
+
+        app.update();
+        app.update();
+
+        let generation = app.world().resource::<InitialWorldGeneration>();
+        let world = app.world().resource::<World>();
+
+        assert!(generation.started);
+        assert_eq!(generation.total_chunks, 29);
+        assert_eq!(generation.target_chunks.len(), 29);
+        assert_eq!(world.pending_chunks.len(), 29);
+    }
+
 }
 
 pub fn mark_chunk_for_update(commands: &mut Commands, world: &World, world_pos: Vec3) {
