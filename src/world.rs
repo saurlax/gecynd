@@ -1,4 +1,4 @@
-use bevy::platform::collections::HashMap;
+use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task, futures_lite::future};
 use serde::{Deserialize, Serialize};
@@ -138,7 +138,9 @@ impl Default for World {
 pub struct InitialWorldGeneration {
     pub started: bool,
     pub finished: bool,
-    pub task: Option<Task<Vec<Chunk>>>,
+    pub total_chunks: usize,
+    pub completed_chunks: usize,
+    pub target_chunks: HashSet<ChunkCoord>,
 }
 
 impl Default for InitialWorldGeneration {
@@ -146,7 +148,9 @@ impl Default for InitialWorldGeneration {
         Self {
             started: false,
             finished: false,
-            task: None,
+            total_chunks: 0,
+            completed_chunks: 0,
+            target_chunks: HashSet::default(),
         }
     }
 }
@@ -265,13 +269,15 @@ fn prepare_world_session(
     world.pending_chunks.clear();
     generation_state.started = false;
     generation_state.finished = false;
-    generation_state.task = None;
+    generation_state.total_chunks = 0;
+    generation_state.completed_chunks = 0;
+    generation_state.target_chunks.clear();
 }
 
 fn queue_chunk_generation(
     world: &mut World,
     coord: ChunkCoord,
-    saved_chunks: HashMap<ChunkCoord, SavedChunk>,
+    saved_chunk: Option<SavedChunk>,
     seed: u32,
 ) {
     if world.chunks.contains_key(&coord) || world.pending_chunks.contains_key(&coord) {
@@ -283,7 +289,7 @@ fn queue_chunk_generation(
         let terrain_generator = TerrainGenerator::new(seed);
         let mut chunk = Chunk::new(coord);
         terrain_generator.generate_chunk(&mut chunk);
-        if let Some(saved_chunk) = saved_chunks.get(&coord) {
+        if let Some(saved_chunk) = saved_chunk {
             for (index, voxel_type) in saved_chunk.voxels.iter().copied().enumerate() {
                 if index < chunk.voxels.len() {
                     chunk.voxels[index] = Voxel::new(voxel_type);
@@ -298,6 +304,7 @@ fn queue_chunk_generation(
 }
 
 fn start_initial_world_generation(
+    mut world: ResMut<World>,
     mut generation_state: ResMut<InitialWorldGeneration>,
     save_state: Res<SaveState>,
 ) {
@@ -310,48 +317,38 @@ fn start_initial_world_generation(
         .initial_player_translation()
         .unwrap_or_else(initial_player_spawn_position);
     let spawn_chunk = ChunkCoord::from_world_pos(spawn_position);
-    let seed = save_state.seed;
-    let saved_chunks = save_state.edited_chunks.clone();
-    let task_pool = AsyncComputeTaskPool::get();
+    let mut target_chunks = HashSet::default();
 
-    generation_state.task = Some(task_pool.spawn(async move {
-        let terrain_generator = TerrainGenerator::new(seed);
-        let mut chunks = Vec::new();
-
-        for x in (spawn_chunk.x - INITIAL_LOAD_RADIUS_CHUNKS)
-            ..=(spawn_chunk.x + INITIAL_LOAD_RADIUS_CHUNKS)
+    for x in
+        (spawn_chunk.x - INITIAL_LOAD_RADIUS_CHUNKS)..=(spawn_chunk.x + INITIAL_LOAD_RADIUS_CHUNKS)
+    {
+        for z in (spawn_chunk.z - INITIAL_LOAD_RADIUS_CHUNKS)
+            ..=(spawn_chunk.z + INITIAL_LOAD_RADIUS_CHUNKS)
         {
-            for z in (spawn_chunk.z - INITIAL_LOAD_RADIUS_CHUNKS)
-                ..=(spawn_chunk.z + INITIAL_LOAD_RADIUS_CHUNKS)
-            {
-                let dx = x - spawn_chunk.x;
-                let dz = z - spawn_chunk.z;
-                if dx * dx + dz * dz > INITIAL_LOAD_RADIUS_CHUNKS * INITIAL_LOAD_RADIUS_CHUNKS {
-                    continue;
-                }
-
-                let coord = ChunkCoord::new(x, z);
-                let mut chunk = Chunk::new(coord);
-                terrain_generator.generate_chunk(&mut chunk);
-                if let Some(saved_chunk) = saved_chunks.get(&coord) {
-                    for (index, voxel_type) in saved_chunk.voxels.iter().copied().enumerate() {
-                        if index < chunk.voxels.len() {
-                            chunk.voxels[index] = Voxel::new(voxel_type);
-                        }
-                    }
-                    chunk.modified = true;
-                }
-                chunks.push(chunk);
+            let dx = x - spawn_chunk.x;
+            let dz = z - spawn_chunk.z;
+            if dx * dx + dz * dz > INITIAL_LOAD_RADIUS_CHUNKS * INITIAL_LOAD_RADIUS_CHUNKS {
+                continue;
             }
-        }
 
-        chunks
-    }));
+            let coord = ChunkCoord::new(x, z);
+            target_chunks.insert(coord);
+            queue_chunk_generation(
+                &mut world,
+                coord,
+                save_state.edited_chunks.get(&coord).cloned(),
+                save_state.seed,
+            );
+        }
+    }
+
+    generation_state.total_chunks = target_chunks.len();
+    generation_state.completed_chunks = 0;
+    generation_state.target_chunks = target_chunks;
 }
 
 fn complete_initial_world_generation(
     mut commands: Commands,
-    mut world: ResMut<World>,
     mut generation_state: ResMut<InitialWorldGeneration>,
     save_state: Res<SaveState>,
     mut inventory: ResMut<Inventory>,
@@ -360,20 +357,12 @@ fn complete_initial_world_generation(
         return;
     }
 
-    let Some(task) = generation_state.task.as_mut() else {
+    if !generation_state.started || generation_state.total_chunks == 0 {
         return;
-    };
-    let Some(chunks) = future::block_on(future::poll_once(task)) else {
-        return;
-    };
-    generation_state.task = None;
+    }
 
-    for chunk in chunks {
-        let coord = chunk.coord;
-        let entity = commands
-            .spawn((chunk, NeedsRenderRefresh, NeedsPhysicsRefresh))
-            .id();
-        world.chunks.insert(coord, entity);
+    if generation_state.completed_chunks < generation_state.total_chunks {
+        return;
     }
 
     *inventory = crate::save::load_inventory_from_save(&save_state);
@@ -389,6 +378,7 @@ fn complete_initial_world_generation(
 fn complete_pending_chunk_generation_system(
     mut commands: Commands,
     mut world: ResMut<World>,
+    mut generation_state: ResMut<InitialWorldGeneration>,
     player_query: Query<&Transform, With<Player>>,
 ) {
     let mut ready_chunks: Vec<(ChunkCoord, Chunk)> = world
@@ -414,6 +404,9 @@ fn complete_pending_chunk_generation_system(
             .spawn((chunk, NeedsRenderRefresh, NeedsPhysicsRefresh))
             .id();
         world.chunks.insert(coord, entity);
+        if generation_state.target_chunks.contains(&coord) {
+            generation_state.completed_chunks += 1;
+        }
     }
 }
 
@@ -435,16 +428,10 @@ fn chunk_loading_system(
                 }
 
                 let coord = ChunkCoord::new(x, z);
-                let saved_chunks = save_state
-                    .edited_chunks
-                    .get(&coord)
-                    .cloned()
-                    .map(|chunk| HashMap::from([(coord, chunk)]))
-                    .unwrap_or_default();
                 queue_chunk_generation(
                     &mut world,
                     coord,
-                    saved_chunks,
+                    save_state.edited_chunks.get(&coord).cloned(),
                     save_state.seed,
                 );
             }

@@ -56,6 +56,12 @@ struct InventoryText;
 struct LoadingRoot;
 
 #[derive(Component)]
+struct LoadingText;
+
+#[derive(Component)]
+struct LoadingProgressFill;
+
+#[derive(Component)]
 struct MainMenuButton {
     action: MainMenuAction,
 }
@@ -408,19 +414,77 @@ fn setup_hud(mut commands: Commands) {
                 height: Val::Percent(100.0),
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
+                padding: UiRect::all(Val::Px(24.0)),
                 ..default()
             },
             BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45)),
         ))
         .with_children(|parent| {
-            parent.spawn((
-                Text::new("Generating terrain..."),
-                TextFont {
-                    font_size: 36.0,
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-            ));
+            parent
+                .spawn((
+                    Node {
+                        width: Val::Px(420.0),
+                        max_width: Val::Percent(100.0),
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Center,
+                        row_gap: Val::Px(14.0),
+                        padding: UiRect::all(Val::Px(24.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.08, 0.10, 0.14, 0.92)),
+                ))
+                .with_children(|panel| {
+                    panel.spawn((
+                        Text::new("Generating terrain... 0 / 0"),
+                        TextFont {
+                            font_size: 32.0,
+                            ..default()
+                        },
+                        TextColor(Color::WHITE),
+                        LoadingText,
+                    ));
+
+                    panel.spawn((
+                        Text::new("Preparing the world around your spawn point"),
+                        TextFont {
+                            font_size: 16.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.82, 0.86, 0.90)),
+                    ));
+
+                    panel
+                        .spawn((
+                            Node {
+                                width: Val::Percent(100.0),
+                                height: Val::Px(20.0),
+                                border: UiRect::all(Val::Px(2.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgb(0.14, 0.16, 0.20)),
+                            BorderColor::all(Color::srgb(0.48, 0.52, 0.58)),
+                        ))
+                        .with_children(|bar| {
+                            bar.spawn((
+                                Node {
+                                    width: Val::Percent(0.0),
+                                    height: Val::Percent(100.0),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgb(0.78, 0.84, 0.32)),
+                                LoadingProgressFill,
+                            ));
+                        });
+
+                    panel.spawn((
+                        Text::new("Terrain generation, caves, and saved edits are loaded chunk by chunk."),
+                        TextFont {
+                            font_size: 14.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.72, 0.76, 0.82)),
+                    ));
+                });
         });
 }
 
@@ -447,12 +511,31 @@ fn update_hud_text(
         Query<&mut Text, With<SelectedMaterialText>>,
         Query<&mut Text, With<ModeText>>,
         Query<&mut Text, With<InventoryText>>,
+        Query<&mut Text, With<LoadingText>>,
+        Query<&mut Node, With<LoadingProgressFill>>,
     )>,
 ) {
     if generation_state.finished {
         if let Ok(entity) = loading_root_query.single() {
             commands.entity(entity).despawn_children();
             commands.entity(entity).despawn();
+        }
+    } else {
+        if let Ok(mut text) = text_queries.p5().single_mut() {
+            **text = format!(
+                "Generating terrain... {} / {}",
+                generation_state.completed_chunks,
+                generation_state.total_chunks
+            );
+        }
+
+        if let Ok(mut node) = text_queries.p6().single_mut() {
+            let progress = if generation_state.total_chunks == 0 {
+                0.0
+            } else {
+                generation_state.completed_chunks as f32 / generation_state.total_chunks as f32
+            };
+            node.width = Val::Percent((progress * 100.0).clamp(0.0, 100.0));
         }
     }
 
