@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::player::{Inventory, Player, PlayerInteraction};
-use crate::save::{DEFAULT_SAVE_PATH, SaveState};
+use crate::save::{DEFAULT_WORLD_META_PATH, SaveState};
 use crate::voxel::VoxelType;
 use crate::world::InitialWorldGeneration;
 use crate::AppState;
@@ -148,7 +148,7 @@ fn setup_main_menu(mut commands: Commands, save_state: Res<SaveState>) {
                     ));
 
                     card.spawn((
-                        Text::new(format!("Default save path: {DEFAULT_SAVE_PATH}")),
+                        Text::new(format!("Default save path: {DEFAULT_WORLD_META_PATH}")),
                         TextFont {
                             font_size: 14.0,
                             ..default()
@@ -502,7 +502,7 @@ fn update_hud_text(
     if let Ok(mut text) = text_queries.p3().single_mut() {
         **text = format!(
             "Mode: Survival block interaction | F5 to save | Save path: {}",
-            DEFAULT_SAVE_PATH
+            DEFAULT_WORLD_META_PATH
         );
     }
 

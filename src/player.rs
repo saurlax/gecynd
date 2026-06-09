@@ -95,7 +95,7 @@ impl Default for PlacementCooldown {
     }
 }
 
-#[derive(Resource)]
+#[derive(Resource, Clone)]
 pub struct Inventory {
     items: HashMap<VoxelType, u32>,
 }
@@ -141,6 +141,10 @@ impl Inventory {
             .into_iter()
             .map(|voxel_type| (voxel_type, self.count(voxel_type)))
             .collect()
+    }
+
+    pub fn clear(&mut self) {
+        self.items.clear();
     }
 }
 
