@@ -23,6 +23,7 @@ pub enum AppState {
     MainMenu,
     LoadingWorld,
     InGame,
+    Paused,
 }
 
 fn main() {

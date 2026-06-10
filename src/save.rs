@@ -7,7 +7,6 @@ use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task, futures_lite::future};
 
-use crate::AppState;
 use crate::player::{Inventory, Player};
 use crate::voxel::VoxelType;
 use crate::world::{Chunk, ChunkCoord};
@@ -148,14 +147,8 @@ pub struct SavePlugin;
 
 impl Plugin for SavePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<SaveState>()
-            .add_systems(Update, process_pending_save_task.run_if(in_state(AppState::InGame)))
-            .add_systems(Update, manual_save_input_system.run_if(in_state(AppState::InGame)));
+        app.init_resource::<SaveState>();
     }
-}
-
-pub fn load_inventory_from_save(save_state: &SaveState) -> Inventory {
-    save_state.loaded_inventory.clone()
 }
 
 fn load_world_directory(root: &Path) -> Option<(WorldMetadata, HashMap<ChunkCoord, SavedChunk>)> {
@@ -177,36 +170,6 @@ fn load_world_directory(root: &Path) -> Option<(WorldMetadata, HashMap<ChunkCoor
     Some((metadata, chunks))
 }
 
-fn process_pending_save_task(mut save_state: ResMut<SaveState>) {
-    let Some(task) = save_state.pending_write.as_mut() else {
-        return;
-    };
-
-    if let Some(result) = future::block_on(future::poll_once(task)) {
-        match result {
-            Ok(()) => {
-                save_state.dirty = false;
-                save_state.dirty_chunks.clear();
-            }
-            Err(error) => warn!("Failed to save world: {error}"),
-        }
-        save_state.pending_write = None;
-    }
-}
-
-fn manual_save_input_system(
-    keyboard_input: Res<ButtonInput<KeyCode>>,
-    mut save_state: ResMut<SaveState>,
-    player_query: Query<&Transform, With<Player>>,
-    chunk_query: Query<&Chunk>,
-    inventory: Res<Inventory>,
-) {
-    if !keyboard_input.just_pressed(KeyCode::F5) || save_state.pending_write.is_some() {
-        return;
-    }
-
-    queue_manual_save(&mut save_state, &player_query, &chunk_query, &inventory);
-}
 
 fn build_save_snapshot(
     save_state: &SaveState,
@@ -255,6 +218,25 @@ pub fn queue_manual_save(
     save_state.pending_write = Some(task_pool.spawn(async move {
         write_world_directory(&root, snapshot.0, snapshot.1)
     }));
+}
+
+pub fn load_inventory_from_save(save_state: &SaveState) -> Inventory {
+    save_state.loaded_inventory.clone()
+}
+
+pub fn flush_pending_save(save_state: &mut SaveState) -> Result<bool, String> {
+    let Some(task) = save_state.pending_write.take() else {
+        return Ok(false);
+    };
+
+    match future::block_on(task) {
+        Ok(()) => {
+            save_state.dirty = false;
+            save_state.dirty_chunks.clear();
+            Ok(true)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 fn write_world_directory(

@@ -1,7 +1,11 @@
 use bevy::prelude::*;
 
 use crate::player::{Inventory, Player, PlayerInteraction};
-use crate::save::{DEFAULT_SAVE_ROOT, DEFAULT_WORLD_META_PATH, SaveState};
+use crate::save::{
+    DEFAULT_SAVE_ROOT, DEFAULT_WORLD_META_PATH, SaveState, flush_pending_save,
+    queue_manual_save,
+};
+use crate::world::Chunk;
 use crate::voxel::VoxelType;
 use crate::world::InitialWorldGeneration;
 use crate::AppState;
@@ -30,7 +34,14 @@ impl Plugin for UiPlugin {
             )
             .add_systems(OnEnter(AppState::InGame), setup_hud)
             .add_systems(OnExit(AppState::InGame), cleanup_hud)
-            .add_systems(Update, update_hud_text.run_if(in_state(AppState::InGame)));
+            .add_systems(OnEnter(AppState::Paused), setup_pause_menu)
+            .add_systems(OnExit(AppState::Paused), cleanup_pause_menu)
+            .add_systems(Update, update_hud_text.run_if(in_state(AppState::InGame)))
+            .add_systems(
+                Update,
+                (pause_menu_button_visuals, pause_menu_actions, pause_input_system)
+                    .run_if(in_state(AppState::Paused)),
+            );
     }
 }
 
@@ -42,6 +53,9 @@ struct MainMenuRoot;
 
 #[derive(Component)]
 struct HudRoot;
+
+#[derive(Component)]
+struct PauseMenuRoot;
 
 #[derive(Component)]
 struct PlayerInfoText;
@@ -72,10 +86,21 @@ struct MainMenuButton {
     action: MainMenuAction,
 }
 
+#[derive(Component)]
+struct PauseMenuButton {
+    action: PauseMenuAction,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum MainMenuAction {
     NewSave,
     LoadSave,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PauseMenuAction {
+    Resume,
+    ReturnToMainMenu,
 }
 
 fn setup_ui_camera(mut commands: Commands) {
@@ -303,6 +328,72 @@ fn main_menu_actions(
     }
 }
 
+fn pause_input_system(
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut next_state: ResMut<NextState<AppState>>,
+) {
+    if keyboard_input.just_pressed(KeyCode::Escape) {
+        next_state.set(AppState::InGame);
+    }
+}
+
+fn pause_menu_button_visuals(
+    mut button_query: Query<
+        (&Interaction, &mut BackgroundColor, &mut BorderColor),
+        (Changed<Interaction>, With<Button>, With<PauseMenuButton>),
+    >,
+) {
+    for (interaction, mut background, mut border) in &mut button_query {
+        match *interaction {
+            Interaction::Pressed => {
+                *background = PRESSED_BUTTON.into();
+                *border = BorderColor::all(Color::srgb(0.95, 0.95, 0.95));
+            }
+            Interaction::Hovered => {
+                *background = HOVERED_BUTTON.into();
+                *border = BorderColor::all(Color::srgb(0.95, 0.95, 0.95));
+            }
+            Interaction::None => {
+                *background = NORMAL_BUTTON.into();
+                *border = BorderColor::all(Color::srgb(0.08, 0.08, 0.08));
+            }
+        }
+    }
+}
+
+fn pause_menu_actions(
+    mut interaction_query: Query<
+        (&Interaction, &PauseMenuButton),
+        (Changed<Interaction>, With<Button>),
+    >,
+    player_query: Query<&Transform, With<Player>>,
+    chunk_query: Query<&Chunk>,
+    inventory: Res<Inventory>,
+    mut save_state: ResMut<SaveState>,
+    mut next_state: ResMut<NextState<AppState>>,
+) {
+    for (interaction, button) in &mut interaction_query {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+
+        match button.action {
+            PauseMenuAction::Resume => next_state.set(AppState::InGame),
+            PauseMenuAction::ReturnToMainMenu => {
+                if save_state.pending_write.is_none() {
+                    queue_manual_save(&mut save_state, &player_query, &chunk_query, &inventory);
+                }
+
+                if let Err(error) = flush_pending_save(&mut save_state) {
+                    warn!("Failed to save world before returning to main menu: {error}");
+                }
+
+                next_state.set(AppState::MainMenu);
+            }
+        }
+    }
+}
+
 fn setup_hud(mut commands: Commands) {
     commands
         .spawn((
@@ -356,7 +447,7 @@ fn setup_hud(mut commands: Commands) {
             ));
 
             parent.spawn((
-                Text::new("Mode: Survival block interaction | F5 to save"),
+                Text::new("Mode: Survival block interaction | Esc to pause"),
                 TextFont {
                     font_size: 18.0,
                     ..default()
@@ -398,7 +489,7 @@ fn setup_hud(mut commands: Commands) {
                         "Left Click: Break Block",
                         "Right Click: Place Block",
                         "1/2/3: Select Grass/Dirt/Stone",
-                        "F5: Save World",
+                        "Esc: Pause / Resume",
                         "Shift: Sprint",
                         "F1: Toggle AABB Debug",
                         "F2: Toggle Render Wireframe",
@@ -425,6 +516,101 @@ fn cleanup_hud(
     hud_query: Query<Entity, With<HudRoot>>,
 ) {
     for entity in hud_query.iter() {
+        commands.entity(entity).despawn();
+    }
+}
+
+fn setup_pause_menu(mut commands: Commands) {
+    commands
+        .spawn((
+            PauseMenuRoot,
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                padding: UiRect::all(Val::Px(24.0)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.04, 0.06, 0.08, 0.72)),
+        ))
+        .with_children(|parent| {
+            parent
+                .spawn((
+                    Node {
+                        width: Val::Px(360.0),
+                        max_width: Val::Percent(100.0),
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Center,
+                        row_gap: Val::Px(14.0),
+                        padding: UiRect::all(Val::Px(24.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.08, 0.10, 0.14, 0.94)),
+                ))
+                .with_children(|panel| {
+                    panel.spawn((
+                        Text::new("Paused"),
+                        TextFont {
+                            font_size: 40.0,
+                            ..default()
+                        },
+                        TextColor(Color::WHITE),
+                    ));
+
+                    panel.spawn((
+                        Text::new("Mouse released. Resume to jump back into the world."),
+                        TextFont {
+                            font_size: 16.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.82, 0.86, 0.90)),
+                    ));
+
+                    spawn_pause_menu_button(panel, "Resume", PauseMenuAction::Resume);
+                    spawn_pause_menu_button(
+                        panel,
+                        "Return To Main Menu",
+                        PauseMenuAction::ReturnToMainMenu,
+                    );
+                });
+        });
+}
+
+fn spawn_pause_menu_button(
+    parent: &mut ChildSpawnerCommands,
+    label: &str,
+    action: PauseMenuAction,
+) {
+    parent
+        .spawn((
+            Button,
+            PauseMenuButton { action },
+            Node {
+                width: Val::Px(320.0),
+                height: Val::Px(40.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                border: UiRect::all(Val::Px(2.0)),
+                ..default()
+            },
+            BackgroundColor(NORMAL_BUTTON),
+            BorderColor::all(Color::srgb(0.08, 0.08, 0.08)),
+        ))
+        .with_children(|button| {
+            button.spawn((
+                Text::new(label),
+                TextFont {
+                    font_size: 20.0,
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+            ));
+        });
+}
+
+fn cleanup_pause_menu(mut commands: Commands, root_query: Query<Entity, With<PauseMenuRoot>>) {
+    for entity in root_query.iter() {
         commands.entity(entity).despawn();
     }
 }
@@ -603,7 +789,7 @@ fn update_hud_text(
 
     if let Ok(mut text) = text_queries.p3().single_mut() {
         **text = format!(
-            "Mode: Survival block interaction | F5 to save | World folder: {}",
+            "Mode: Survival block interaction | Esc to pause | World folder: {}",
             DEFAULT_SAVE_ROOT
         );
     }

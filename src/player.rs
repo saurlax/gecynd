@@ -157,6 +157,8 @@ impl Plugin for PlayerPlugin {
             .init_resource::<PlacementCooldown>()
             .init_resource::<Inventory>()
             .add_systems(Startup, setup_cursor_grab)
+            .add_systems(OnEnter(AppState::InGame), lock_cursor_on_ingame_enter)
+            .add_systems(OnEnter(AppState::Paused), release_cursor_on_pause_enter)
             .add_systems(
                 Update,
                 (
@@ -327,6 +329,7 @@ fn handle_cursor_grab(
     mut window_cursor_query: Query<(&mut Window, &mut CursorOptions), With<PrimaryWindow>>,
     mut cursor_state: ResMut<CursorState>,
     generation_state: Res<InitialWorldGeneration>,
+    mut next_state: ResMut<NextState<AppState>>,
 ) {
     if !generation_state.finished {
         if let Ok((_window, mut cursor_options)) = window_cursor_query.single_mut() {
@@ -342,6 +345,7 @@ fn handle_cursor_grab(
         {
             cursor_state.was_locked_before_focus_loss = false;
             release_cursor(&mut cursor_options);
+            next_state.set(AppState::Paused);
         } else if mouse_input.just_pressed(MouseButton::Left)
             && cursor_options.grab_mode == CursorGrabMode::None
             && window.focused
@@ -398,6 +402,26 @@ fn sync_cursor_with_window_focus(
 fn setup_cursor_grab(mut window_cursor_query: Query<&mut CursorOptions, With<PrimaryWindow>>) {
     if let Ok(mut cursor_options) = window_cursor_query.single_mut() {
         release_cursor(&mut cursor_options);
+    }
+}
+
+fn lock_cursor_on_ingame_enter(
+    mut window_cursor_query: Query<(&mut Window, &mut CursorOptions), With<PrimaryWindow>>,
+    mut cursor_state: ResMut<CursorState>,
+) {
+    if let Ok((mut window, mut cursor_options)) = window_cursor_query.single_mut() {
+        lock_cursor(&mut window, &mut cursor_options);
+        cursor_state.was_locked_before_focus_loss = false;
+    }
+}
+
+fn release_cursor_on_pause_enter(
+    mut window_cursor_query: Query<&mut CursorOptions, With<PrimaryWindow>>,
+    mut cursor_state: ResMut<CursorState>,
+) {
+    if let Ok(mut cursor_options) = window_cursor_query.single_mut() {
+        release_cursor(&mut cursor_options);
+        cursor_state.was_locked_before_focus_loss = false;
     }
 }
 

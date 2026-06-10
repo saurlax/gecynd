@@ -245,6 +245,7 @@ impl Plugin for WorldPlugin {
             .init_resource::<DebugViewMode>()
             .init_resource::<InitialWorldGeneration>()
             .add_message::<EditRequest>()
+            .add_systems(OnEnter(AppState::MainMenu), cleanup_world_session)
             .add_systems(
                 OnEnter(AppState::LoadingWorld),
                 (prepare_world_session, start_initial_world_generation).chain(),
@@ -290,9 +291,31 @@ fn finish_world_loading(
 }
 
 fn prepare_world_session(
+    mut commands: Commands,
     mut world: ResMut<World>,
     mut generation_state: ResMut<InitialWorldGeneration>,
 ) {
+    for entity in world.chunks.values().copied().collect::<Vec<_>>() {
+        commands.entity(entity).despawn();
+    }
+    world.chunks.clear();
+    world.pending_chunks.clear();
+    generation_state.started = false;
+    generation_state.finished = false;
+    generation_state.total_chunks = 0;
+    generation_state.completed_chunks = 0;
+    generation_state.target_chunks.clear();
+    generation_state.spawn_position = None;
+}
+
+fn cleanup_world_session(
+    mut commands: Commands,
+    mut world: ResMut<World>,
+    mut generation_state: ResMut<InitialWorldGeneration>,
+) {
+    for entity in world.chunks.values().copied().collect::<Vec<_>>() {
+        commands.entity(entity).despawn();
+    }
     world.chunks.clear();
     world.pending_chunks.clear();
     generation_state.started = false;
