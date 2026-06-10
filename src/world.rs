@@ -282,7 +282,12 @@ fn finish_world_loading(
     generation_state: Res<InitialWorldGeneration>,
     save_state: Res<SaveState>,
     mut inventory: ResMut<Inventory>,
+    player_query: Query<Entity, With<Player>>,
 ) {
+    if !player_query.is_empty() {
+        return;
+    }
+
     *inventory = crate::save::load_inventory_from_save(&save_state);
     spawn_player(
         &mut commands,
@@ -712,6 +717,45 @@ mod tests {
         let world = app.world().resource::<World>();
         assert!(world.chunks.contains_key(&coord));
         assert!(!world.pending_chunks.contains_key(&coord));
+    }
+
+    #[test]
+    fn resuming_from_pause_does_not_spawn_duplicate_player() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_plugins(StatesPlugin)
+            .init_state::<AppState>()
+            .init_resource::<SaveState>()
+            .init_resource::<Inventory>()
+            .init_resource::<ButtonInput<KeyCode>>()
+            .add_plugins(WorldPlugin);
+
+        {
+            let mut generation = app.world_mut().resource_mut::<InitialWorldGeneration>();
+            generation.spawn_position = Some(initial_player_spawn_position());
+        }
+
+        app.world_mut()
+            .resource_mut::<NextState<AppState>>()
+            .set(AppState::InGame);
+        app.update();
+        app.update();
+
+        app.world_mut()
+            .resource_mut::<NextState<AppState>>()
+            .set(AppState::Paused);
+        app.update();
+        app.update();
+
+        app.world_mut()
+            .resource_mut::<NextState<AppState>>()
+            .set(AppState::InGame);
+        app.update();
+        app.update();
+
+        let mut player_query = app.world_mut().query_filtered::<Entity, With<Player>>();
+        let player_count = player_query.iter(app.world()).count();
+        assert_eq!(player_count, 1);
     }
 
 }
