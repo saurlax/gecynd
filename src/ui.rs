@@ -79,7 +79,14 @@ enum MainMenuAction {
 }
 
 fn setup_ui_camera(mut commands: Commands) {
-    commands.spawn((Camera2d, UiCameraRoot));
+    commands.spawn((
+        Camera2d,
+        Camera {
+            order: 1,
+            ..default()
+        },
+        UiCameraRoot,
+    ));
 }
 
 fn setup_main_menu(mut commands: Commands, save_state: Res<SaveState>) {

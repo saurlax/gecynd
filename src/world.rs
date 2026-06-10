@@ -253,8 +253,10 @@ impl Plugin for WorldPlugin {
             .add_systems(
                 Update,
                 (
+                    complete_pending_chunk_generation_system,
                     complete_initial_world_generation,
                 )
+                    .chain()
                     .run_if(in_state(AppState::LoadingWorld)),
             )
             .add_systems(
@@ -598,7 +600,6 @@ mod tests {
             .set(AppState::LoadingWorld);
 
         app.update();
-        app.update();
 
         let generation = app.world().resource::<InitialWorldGeneration>();
         let world = app.world().resource::<World>();
@@ -606,7 +607,72 @@ mod tests {
         assert!(generation.started);
         assert_eq!(generation.total_chunks, 29);
         assert_eq!(generation.target_chunks.len(), 29);
-        assert_eq!(world.pending_chunks.len(), 29);
+        assert_eq!(generation.completed_chunks + world.pending_chunks.len(), 29);
+    }
+
+    #[test]
+    fn loading_world_transitions_to_ingame_after_initial_chunks_complete() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_plugins(StatesPlugin)
+            .init_state::<AppState>()
+            .init_resource::<SaveState>()
+            .init_resource::<Inventory>()
+            .init_resource::<ButtonInput<KeyCode>>()
+            .add_plugins(WorldPlugin);
+
+        app.world_mut()
+            .resource_mut::<NextState<AppState>>()
+            .set(AppState::LoadingWorld);
+
+        app.update();
+
+        {
+            let mut generation = app.world_mut().resource_mut::<InitialWorldGeneration>();
+            generation.started = true;
+            generation.total_chunks = 1;
+            generation.completed_chunks = 1;
+            generation.target_chunks.insert(ChunkCoord::new(0, 0));
+            generation.spawn_position = Some(initial_player_spawn_position());
+        }
+
+        app.update();
+        app.update();
+
+        assert_eq!(*app.world().resource::<State<AppState>>().get(), AppState::InGame);
+    }
+
+    #[test]
+    fn ingame_processes_pending_chunks() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_plugins(StatesPlugin)
+            .init_state::<AppState>()
+            .init_resource::<SaveState>()
+            .init_resource::<Inventory>()
+            .init_resource::<ButtonInput<KeyCode>>()
+            .add_plugins(WorldPlugin);
+
+        let coord = ChunkCoord::new(0, 0);
+        {
+            let mut world = app.world_mut().resource_mut::<World>();
+            let task_pool = AsyncComputeTaskPool::get();
+            world
+                .pending_chunks
+                .insert(coord, task_pool.spawn(async move { Chunk::new(coord) }));
+        }
+
+        app.world_mut()
+            .resource_mut::<NextState<AppState>>()
+            .set(AppState::InGame);
+
+        for _ in 0..8 {
+            app.update();
+        }
+
+        let world = app.world().resource::<World>();
+        assert!(world.chunks.contains_key(&coord));
+        assert!(!world.pending_chunks.contains_key(&coord));
     }
 
 }
