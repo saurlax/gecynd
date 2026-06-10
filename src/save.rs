@@ -16,7 +16,6 @@ const DEFAULT_WORLD_SEED: u32 = 12345;
 const SAVE_MAGIC: &[u8; 4] = b"GECY";
 const CHUNK_MAGIC: &[u8; 4] = b"GCHK";
 pub const DEFAULT_SAVE_ROOT: &str = "saves/default_world";
-pub const DEFAULT_WORLD_META_PATH: &str = "saves/default_world/world.meta";
 
 #[derive(Clone)]
 pub struct SavedChunk {

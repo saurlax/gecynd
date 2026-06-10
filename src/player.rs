@@ -2,7 +2,7 @@ use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::time::Fixed;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow, WindowFocused};
-use bevy::{ecs::message::MessageReader, input::mouse::MouseMotion};
+use bevy::{ecs::message::MessageReader, input::mouse::{MouseMotion, MouseWheel}};
 use bevy_rapier3d::prelude::*;
 
 use crate::AppState;
@@ -146,6 +146,22 @@ impl Inventory {
     pub fn clear(&mut self) {
         self.items.clear();
     }
+}
+
+pub const HOTBAR_MATERIALS: [VoxelType; 3] = [VoxelType::Grass, VoxelType::Dirt, VoxelType::Stone];
+
+pub fn selected_material_index(selected_material: VoxelType) -> usize {
+    HOTBAR_MATERIALS
+        .iter()
+        .position(|material| *material == selected_material)
+        .unwrap_or(HOTBAR_MATERIALS.len() - 1)
+}
+
+fn set_selected_material_by_index(interaction: &mut PlayerInteraction, index: usize) {
+    interaction.selected_material = HOTBAR_MATERIALS
+        .get(index)
+        .copied()
+        .unwrap_or(VoxelType::Stone);
 }
 
 pub struct PlayerPlugin;
@@ -572,15 +588,34 @@ fn voxel_selection(
 
 fn material_selection_input(
     keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut mouse_wheel: MessageReader<MouseWheel>,
     mut interaction: ResMut<PlayerInteraction>,
 ) {
     if keyboard_input.just_pressed(KeyCode::Digit1) {
-        interaction.selected_material = VoxelType::Grass;
-    } else if keyboard_input.just_pressed(KeyCode::Digit2) {
-        interaction.selected_material = VoxelType::Dirt;
-    } else if keyboard_input.just_pressed(KeyCode::Digit3) {
-        interaction.selected_material = VoxelType::Stone;
+        set_selected_material_by_index(&mut interaction, 0);
+        return;
     }
+
+    if keyboard_input.just_pressed(KeyCode::Digit2) {
+        set_selected_material_by_index(&mut interaction, 1);
+        return;
+    }
+
+    if keyboard_input.just_pressed(KeyCode::Digit3) {
+        set_selected_material_by_index(&mut interaction, 2);
+        return;
+    }
+
+    let scroll_delta = mouse_wheel.read().map(|event| event.y).sum::<f32>();
+    if scroll_delta == 0.0 {
+        return;
+    }
+
+    let current_index = selected_material_index(interaction.selected_material) as i32;
+    let material_count = HOTBAR_MATERIALS.len() as i32;
+    let direction = if scroll_delta > 0.0 { -1 } else { 1 };
+    let next_index = (current_index + direction).rem_euclid(material_count) as usize;
+    set_selected_material_by_index(&mut interaction, next_index);
 }
 
 fn calculate_placement_position(voxel_center: Vec3, face: VoxelFace) -> Vec3 {

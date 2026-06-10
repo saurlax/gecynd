@@ -1,19 +1,22 @@
 use bevy::prelude::*;
 
-use crate::player::{Inventory, Player, PlayerInteraction};
-use crate::save::{
-    DEFAULT_SAVE_ROOT, DEFAULT_WORLD_META_PATH, SaveState, flush_pending_save,
-    queue_manual_save,
+use crate::player::{
+    HOTBAR_MATERIALS, Inventory, Player, PlayerInteraction, selected_material_index,
 };
+use crate::save::{SaveState, flush_pending_save, queue_manual_save};
 use crate::world::Chunk;
 use crate::voxel::VoxelType;
-use crate::world::InitialWorldGeneration;
+use crate::world::{DebugInfoState, InitialWorldGeneration};
 use crate::AppState;
 
 const NORMAL_BUTTON: Color = Color::srgb(0.30, 0.30, 0.30);
 const HOVERED_BUTTON: Color = Color::srgb(0.42, 0.42, 0.42);
 const PRESSED_BUTTON: Color = Color::srgb(0.56, 0.56, 0.56);
 const DISABLED_BUTTON: Color = Color::srgb(0.16, 0.16, 0.16);
+const HOTBAR_SLOT: Color = Color::srgba(0.08, 0.10, 0.14, 0.82);
+const HOTBAR_SLOT_SELECTED: Color = Color::srgb(0.86, 0.76, 0.34);
+const HOTBAR_BORDER: Color = Color::srgba(0.72, 0.76, 0.82, 0.55);
+const HOTBAR_BORDER_SELECTED: Color = Color::srgb(0.98, 0.95, 0.82);
 
 pub struct UiPlugin;
 
@@ -36,7 +39,10 @@ impl Plugin for UiPlugin {
             .add_systems(OnExit(AppState::InGame), cleanup_hud)
             .add_systems(OnEnter(AppState::Paused), setup_pause_menu)
             .add_systems(OnExit(AppState::Paused), cleanup_pause_menu)
-            .add_systems(Update, update_hud_text.run_if(in_state(AppState::InGame)))
+            .add_systems(
+                Update,
+                (update_hud_text, sync_debug_info_visibility).run_if(in_state(AppState::InGame)),
+            )
             .add_systems(
                 Update,
                 (pause_menu_button_visuals, pause_menu_actions, pause_input_system)
@@ -64,13 +70,25 @@ struct PlayerInfoText;
 struct SelectedBlockText;
 
 #[derive(Component)]
-struct SelectedMaterialText;
+struct DebugInfoRoot;
 
 #[derive(Component)]
-struct ModeText;
+struct HotbarRoot;
 
 #[derive(Component)]
-struct InventoryText;
+struct HotbarSlot {
+    index: usize,
+}
+
+#[derive(Component)]
+struct HotbarSlotLabel {
+    material: VoxelType,
+}
+
+#[derive(Component)]
+struct HotbarSlotCount {
+    material: VoxelType,
+}
 
 #[derive(Component)]
 struct LoadingRoot;
@@ -154,7 +172,7 @@ fn setup_main_menu(mut commands: Commands, save_state: Res<SaveState>) {
                     ));
 
                     card.spawn((
-                        Text::new("Rusty blocks. Survival first."),
+                        Text::new("Prototype Sandbox Build"),
                         TextFont {
                             font_size: 18.0,
                             ..default()
@@ -174,37 +192,10 @@ fn setup_main_menu(mut commands: Commands, save_state: Res<SaveState>) {
                         save_state.save_exists(),
                     );
 
-                    card.spawn((
-                        Text::new(if save_state.save_exists() {
-                            "Existing save found."
-                        } else {
-                            "No save file found yet."
-                        }),
-                        TextFont {
-                            font_size: 16.0,
-                            ..default()
-                        },
-                        TextColor(Color::srgb(0.92, 0.92, 0.92)),
-                        Node {
-                            margin: UiRect::top(Val::Px(12.0)),
-                            ..default()
-                        },
-                    ));
-
-                    card.spawn((
-                        Text::new(format!(
-                            "World folder: {DEFAULT_SAVE_ROOT}\nMetadata file: {DEFAULT_WORLD_META_PATH}"
-                        )),
-                        TextFont {
-                            font_size: 14.0,
-                            ..default()
-                        },
-                        TextColor(Color::srgb(0.88, 0.88, 0.88)),
-                    ));
                 });
 
             parent.spawn((
-                Text::new("Bevy native UI prototype"),
+                Text::new("Closed Alpha Build 0.1.0"),
                 TextFont {
                     font_size: 14.0,
                     ..default()
@@ -213,6 +204,21 @@ fn setup_main_menu(mut commands: Commands, save_state: Res<SaveState>) {
                 Node {
                     position_type: PositionType::Absolute,
                     left: Val::Px(12.0),
+                    bottom: Val::Px(10.0),
+                    ..default()
+                },
+            ));
+
+            parent.spawn((
+                Text::new("Copyright 2026 Gecynd Project"),
+                TextFont {
+                    font_size: 14.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.95, 0.95, 0.95)),
+                Node {
+                    position_type: PositionType::Absolute,
+                    right: Val::Px(12.0),
                     bottom: Val::Px(10.0),
                     ..default()
                 },
@@ -402,109 +408,107 @@ fn setup_hud(mut commands: Commands) {
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
                 flex_direction: FlexDirection::Column,
+                justify_content: JustifyContent::SpaceBetween,
                 padding: UiRect::all(Val::Px(10.0)),
                 ..default()
             },
             BackgroundColor(Color::NONE),
         ))
         .with_children(|parent| {
-            parent.spawn((
-                Text::new("Position: (0.0, 0.0, 0.0)"),
-                TextFont {
-                    font_size: 20.0,
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-                PlayerInfoText,
-            ));
+            parent
+                .spawn((
+                    DebugInfoRoot,
+                    Node {
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(5.0),
+                        ..default()
+                    },
+                    BackgroundColor(Color::NONE),
+                    Visibility::Hidden,
+                ))
+                .with_children(|parent| {
+                    parent.spawn((
+                        Text::new("Position: (0.0, 0.0, 0.0)"),
+                        TextFont {
+                            font_size: 20.0,
+                            ..default()
+                        },
+                        TextColor(Color::WHITE),
+                        PlayerInfoText,
+                    ));
 
-            parent.spawn((
-                Text::new("Selected: None"),
-                TextFont {
-                    font_size: 20.0,
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-                SelectedBlockText,
-                Node {
-                    margin: UiRect::top(Val::Px(5.0)),
-                    ..default()
-                },
-            ));
-
-            parent.spawn((
-                Text::new("Material: Stone [1 Grass, 2 Dirt, 3 Stone]"),
-                TextFont {
-                    font_size: 18.0,
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-                SelectedMaterialText,
-                Node {
-                    margin: UiRect::top(Val::Px(5.0)),
-                    ..default()
-                },
-            ));
-
-            parent.spawn((
-                Text::new("Mode: Survival block interaction | Esc to pause"),
-                TextFont {
-                    font_size: 18.0,
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-                ModeText,
-                Node {
-                    margin: UiRect::top(Val::Px(5.0)),
-                    ..default()
-                },
-            ));
-
-            parent.spawn((
-                Text::new("Inventory: Grass 0 | Dirt 0 | Stone 0"),
-                TextFont {
-                    font_size: 18.0,
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-                InventoryText,
-                Node {
-                    margin: UiRect::top(Val::Px(5.0)),
-                    ..default()
-                },
-            ));
+                    parent.spawn((
+                        Text::new("Selected: None"),
+                        TextFont {
+                            font_size: 20.0,
+                            ..default()
+                        },
+                        TextColor(Color::WHITE),
+                        SelectedBlockText,
+                    ));
+                });
 
             parent
                 .spawn((
+                    HotbarRoot,
                     Node {
-                        flex_direction: FlexDirection::Column,
-                        margin: UiRect::top(Val::Px(10.0)),
+                        width: Val::Percent(100.0),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::End,
+                        padding: UiRect::bottom(Val::Px(14.0)),
+                        column_gap: Val::Px(10.0),
                         ..default()
                     },
                     BackgroundColor(Color::NONE),
                 ))
-                .with_children(|parent| {
-                    let controls = [
-                        "Controls:",
-                        "Left Click: Break Block",
-                        "Right Click: Place Block",
-                        "1/2/3: Select Grass/Dirt/Stone",
-                        "Esc: Pause / Resume",
-                        "Shift: Sprint",
-                        "F1: Toggle AABB Debug",
-                        "F2: Toggle Render Wireframe",
-                        "F3: Toggle Physics Wireframe",
-                    ];
+                .with_children(|hotbar| {
+                    for (index, material) in HOTBAR_MATERIALS.iter().copied().enumerate() {
+                        hotbar
+                            .spawn((
+                                HotbarSlot { index },
+                                Node {
+                                    width: Val::Px(92.0),
+                                    height: Val::Px(92.0),
+                                    flex_direction: FlexDirection::Column,
+                                    justify_content: JustifyContent::SpaceBetween,
+                                    align_items: AlignItems::Stretch,
+                                    padding: UiRect::all(Val::Px(10.0)),
+                                    border: UiRect::all(Val::Px(2.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(HOTBAR_SLOT),
+                                BorderColor::all(HOTBAR_BORDER),
+                            ))
+                            .with_children(|slot| {
+                                slot.spawn((
+                                    Text::new(format!("{}", index + 1)),
+                                    TextFont {
+                                        font_size: 14.0,
+                                        ..default()
+                                    },
+                                    TextColor(Color::srgb(0.84, 0.86, 0.90)),
+                                ));
 
-                    for control_text in controls {
-                        parent.spawn((
-                            Text::new(control_text),
-                            TextFont {
-                                font_size: 16.0,
-                                ..default()
-                            },
-                            TextColor(Color::srgb(0.8, 0.8, 0.8)),
-                        ));
+                                slot.spawn((
+                                    Text::new(hotbar_material_name(material)),
+                                    TextFont {
+                                        font_size: 18.0,
+                                        ..default()
+                                    },
+                                    TextColor(Color::WHITE),
+                                    HotbarSlotLabel { material },
+                                ));
+
+                                slot.spawn((
+                                    Text::new("x0"),
+                                    TextFont {
+                                        font_size: 15.0,
+                                        ..default()
+                                    },
+                                    TextColor(Color::srgb(0.92, 0.94, 0.96)),
+                                    HotbarSlotCount { material },
+                                ));
+                            });
                     }
                 });
         });
@@ -517,6 +521,15 @@ fn cleanup_hud(
 ) {
     for entity in hud_query.iter() {
         commands.entity(entity).despawn();
+    }
+}
+
+fn hotbar_material_name(material: VoxelType) -> &'static str {
+    match material {
+        VoxelType::Grass => "Grass",
+        VoxelType::Dirt => "Dirt",
+        VoxelType::Stone => "Stone",
+        VoxelType::Air => "Air",
     }
 }
 
@@ -556,15 +569,6 @@ fn setup_pause_menu(mut commands: Commands) {
                             ..default()
                         },
                         TextColor(Color::WHITE),
-                    ));
-
-                    panel.spawn((
-                        Text::new("Mouse released. Resume to jump back into the world."),
-                        TextFont {
-                            font_size: 16.0,
-                            ..default()
-                        },
-                        TextColor(Color::srgb(0.82, 0.86, 0.90)),
                     ));
 
                     spawn_pause_menu_button(panel, "Resume", PauseMenuAction::Resume);
@@ -645,7 +649,7 @@ fn setup_loading_screen(mut commands: Commands) {
                 ))
                 .with_children(|panel| {
                     panel.spawn((
-                        Text::new("Generating terrain... 0 / 0"),
+                        Text::new("Preparing World... 0 / 0"),
                         TextFont {
                             font_size: 32.0,
                             ..default()
@@ -655,7 +659,7 @@ fn setup_loading_screen(mut commands: Commands) {
                     ));
 
                     panel.spawn((
-                        Text::new("Preparing the world around your spawn point"),
+                        Text::new("Initializing terrain and loading nearby regions."),
                         TextFont {
                             font_size: 16.0,
                             ..default()
@@ -684,10 +688,10 @@ fn setup_loading_screen(mut commands: Commands) {
                                 BackgroundColor(Color::srgb(0.78, 0.84, 0.32)),
                                 LoadingProgressFill,
                             ));
-                        });
+                    });
 
                     panel.spawn((
-                        Text::new("Terrain generation, caves, and saved edits are loaded chunk by chunk."),
+                        Text::new("Please wait while world data is assembled."),
                         TextFont {
                             font_size: 14.0,
                             ..default()
@@ -713,7 +717,7 @@ fn update_loading_screen(
 ) {
     if let Ok(mut text) = text_queries.p0().single_mut() {
         **text = format!(
-            "Generating terrain... {} / {}",
+            "Preparing World... {} / {}",
             generation_state.completed_chunks,
             generation_state.total_chunks
         );
@@ -737,9 +741,9 @@ fn update_hud_text(
     mut text_queries: ParamSet<(
         Query<&mut Text, With<PlayerInfoText>>,
         Query<&mut Text, With<SelectedBlockText>>,
-        Query<&mut Text, With<SelectedMaterialText>>,
-        Query<&mut Text, With<ModeText>>,
-        Query<&mut Text, With<InventoryText>>,
+        Query<(&HotbarSlot, &mut BackgroundColor, &mut BorderColor)>,
+        Query<(&HotbarSlotCount, &mut Text)>,
+        Query<(&HotbarSlotLabel, &mut TextColor)>,
     )>,
 ) {
     if let Ok(player_transform) = player_query.single() {
@@ -777,29 +781,43 @@ fn update_hud_text(
         }
     }
 
-    if let Ok(mut text) = text_queries.p2().single_mut() {
-        let material_name = match interaction.selected_material {
-            VoxelType::Grass => "Grass",
-            VoxelType::Dirt => "Dirt",
-            VoxelType::Stone => "Stone",
-            VoxelType::Air => "Air",
+    let selected_index = selected_material_index(interaction.selected_material);
+    for (slot, mut background, mut border) in &mut text_queries.p2() {
+        let is_selected = slot.index == selected_index;
+        *background = if is_selected {
+            HOTBAR_SLOT_SELECTED.into()
+        } else {
+            HOTBAR_SLOT.into()
         };
-        **text = format!("Material: {material_name} [1 Grass, 2 Dirt, 3 Stone]");
+        *border = BorderColor::all(if is_selected {
+            HOTBAR_BORDER_SELECTED
+        } else {
+            HOTBAR_BORDER
+        });
     }
 
-    if let Ok(mut text) = text_queries.p3().single_mut() {
-        **text = format!(
-            "Mode: Survival block interaction | Esc to pause | World folder: {}",
-            DEFAULT_SAVE_ROOT
-        );
+    for (slot_count, mut text) in &mut text_queries.p3() {
+        **text = format!("x{}", inventory.count(slot_count.material));
     }
 
-    if let Ok(mut text) = text_queries.p4().single_mut() {
-        **text = format!(
-            "Inventory: Grass {} | Dirt {} | Stone {}",
-            inventory.count(VoxelType::Grass),
-            inventory.count(VoxelType::Dirt),
-            inventory.count(VoxelType::Stone)
-        );
+    for (slot_label, mut text_color) in &mut text_queries.p4() {
+        *text_color = if slot_label.material == interaction.selected_material {
+            TextColor(Color::srgb(0.14, 0.10, 0.02))
+        } else {
+            TextColor(Color::WHITE)
+        };
+    }
+}
+
+fn sync_debug_info_visibility(
+    debug_info_state: Res<DebugInfoState>,
+    mut debug_info_query: Query<&mut Visibility, With<DebugInfoRoot>>,
+) {
+    if let Ok(mut visibility) = debug_info_query.single_mut() {
+        *visibility = if debug_info_state.enabled {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
     }
 }

@@ -1,14 +1,12 @@
 use bevy::asset::RenderAssetUsages;
-use bevy::light::{NotShadowCaster, NotShadowReceiver};
 use bevy::mesh::{Indices, PrimitiveTopology};
-use bevy::pbr::wireframe::{Wireframe, WireframePlugin};
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task, futures_lite::future};
 
 use crate::player::{PlayerInteraction, brush_center_for_edit, brush_preview_origin, brush_world_size};
 use crate::voxel::{VOXEL_SIZE, VoxelFace, VoxelType};
 use crate::world::{
-    CHUNK_VOXELS_HEIGHT, CHUNK_VOXELS_SIZE, Chunk, ChunkCoord, DebugViewMode, World,
+    CHUNK_VOXELS_HEIGHT, CHUNK_VOXELS_SIZE, Chunk, ChunkCoord, World,
     chunk_world_height, chunk_world_origin,
 };
 use crate::AppState;
@@ -21,9 +19,6 @@ pub struct VoxelHighlight;
 
 #[derive(Component)]
 pub struct Crosshair;
-
-#[derive(Component)]
-pub struct DebugAabb;
 
 #[derive(Component)]
 struct PendingRenderMesh(Task<(u64, Option<Mesh>)>);
@@ -51,8 +46,7 @@ struct ChunkMaterial {
 
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(WireframePlugin::default())
-            .add_systems(OnEnter(AppState::LoadingWorld), (setup_lighting, setup_chunk_material))
+        app.add_systems(OnEnter(AppState::LoadingWorld), (setup_lighting, setup_chunk_material))
             .add_systems(
                 OnEnter(AppState::InGame),
                 (setup_crosshair, setup_voxel_highlight),
@@ -61,11 +55,9 @@ impl Plugin for RenderPlugin {
             .add_systems(
                 Update,
                 (
-                    sync_render_wireframe_mode,
                     queue_chunk_render_builds.before(process_chunk_render_builds),
-                    process_chunk_render_builds.before(debug_aabb_system),
+                    process_chunk_render_builds,
                     voxel_highlight_system,
-                    debug_aabb_system,
                 )
                     .run_if(in_state(AppState::LoadingWorld).or(in_state(AppState::InGame))),
             );
@@ -220,11 +212,8 @@ fn queue_chunk_render_builds(
 fn process_chunk_render_builds(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
     chunk_material: Res<ChunkMaterial>,
     mut chunk_query: Query<(Entity, &mut PendingRenderMesh, &Chunk)>,
-    debug_state: Res<crate::world::DebugAabbState>,
-    debug_view_mode: Res<DebugViewMode>,
 ) {
     for (entity, mut pending_mesh, chunk) in chunk_query.iter_mut() {
         let Some((revision, mesh)) = future::block_on(future::poll_once(&mut pending_mesh.0))
@@ -240,11 +229,6 @@ fn process_chunk_render_builds(
         if let Some(mesh) = mesh {
             let mesh_handle = meshes.add(mesh);
             let chunk_world_pos = chunk_world_origin(chunk.coord);
-            let wireframe = if debug_view_mode.render_wireframe {
-                Some(Wireframe)
-            } else {
-                None
-            };
 
             let mut entity_commands = commands.entity(entity);
             entity_commands.remove::<PendingRenderMesh>();
@@ -257,14 +241,6 @@ fn process_chunk_render_builds(
                 GlobalTransform::default(),
                 Visibility::Visible,
             ));
-
-            if let Some(wireframe) = wireframe {
-                entity_commands.insert(wireframe);
-            }
-
-            if debug_state.enabled {
-                create_debug_aabb_for_chunk(&mut commands, &mut meshes, &mut materials, entity);
-            }
         } else {
             commands
                 .entity(entity)
@@ -272,29 +248,10 @@ fn process_chunk_render_builds(
                 .remove::<crate::player::NeedsRenderRefresh>()
                 .remove::<ChunkMesh>()
                 .remove::<Mesh3d>()
-                .remove::<MeshMaterial3d<StandardMaterial>>()
-                .remove::<Wireframe>();
+                .remove::<MeshMaterial3d<StandardMaterial>>();
         }
 
         commands.entity(entity).remove::<PendingRenderMesh>();
-    }
-}
-
-fn sync_render_wireframe_mode(
-    debug_view_mode: Res<DebugViewMode>,
-    mut commands: Commands,
-    chunk_query: Query<Entity, With<ChunkMesh>>,
-    wireframe_query: Query<(), With<Wireframe>>,
-) {
-    let render_mode_enabled = debug_view_mode.render_wireframe;
-
-    for entity in chunk_query.iter() {
-        let has_wireframe = wireframe_query.get(entity).is_ok();
-        if render_mode_enabled && !has_wireframe {
-            commands.entity(entity).insert(Wireframe);
-        } else if !render_mode_enabled && has_wireframe {
-            commands.entity(entity).remove::<Wireframe>();
-        }
     }
 }
 
@@ -372,101 +329,6 @@ fn create_box_wireframe(size: Vec3) -> Mesh {
     mesh
 }
 
-fn debug_aabb_system(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    keys: Res<ButtonInput<KeyCode>>,
-    chunk_query: Query<Entity, With<ChunkMesh>>,
-    debug_query: Query<Entity, With<DebugAabb>>,
-    children_query: Query<&Children>,
-    debug_state: Res<crate::world::DebugAabbState>,
-) {
-    if keys.just_pressed(KeyCode::F1) {
-        if debug_state.enabled {
-            for chunk_entity in chunk_query.iter() {
-                let has_debug_aabb = if let Ok(children) = children_query.get(chunk_entity) {
-                    children.iter().any(|child| debug_query.get(child).is_ok())
-                } else {
-                    false
-                };
-
-                if !has_debug_aabb {
-                    create_debug_aabb_for_chunk(
-                        &mut commands,
-                        &mut meshes,
-                        &mut materials,
-                        chunk_entity,
-                    );
-                }
-            }
-        } else {
-            for entity in debug_query.iter() {
-                commands.entity(entity).despawn();
-            }
-        }
-    }
-}
-
-fn create_debug_aabb_for_chunk(
-    commands: &mut Commands,
-    meshes: &mut ResMut<Assets<Mesh>>,
-    materials: &mut ResMut<Assets<StandardMaterial>>,
-    chunk_entity: Entity,
-) {
-    let chunk_size_world = CHUNK_VOXELS_SIZE as f32 * VOXEL_SIZE;
-    let chunk_height_world = chunk_world_height();
-
-    let min = Vec3::new(0.0, 0.0, 0.0);
-    let max = Vec3::new(chunk_size_world, chunk_height_world, chunk_size_world);
-
-    let vertices = vec![
-        [min.x, min.y, min.z],
-        [max.x, min.y, min.z],
-        [max.x, min.y, max.z],
-        [min.x, min.y, max.z],
-        [min.x, max.y, min.z],
-        [max.x, max.y, min.z],
-        [max.x, max.y, max.z],
-        [min.x, max.y, max.z],
-    ];
-
-    let indices = vec![
-        0, 1, 1, 2, 2, 3, 3, 0, 4, 5, 5, 6, 6, 7, 7, 4, 0, 4, 1, 5, 2, 6, 3, 7,
-    ];
-
-    let normals = vec![[0.0, 1.0, 0.0]; 8];
-    let uvs = vec![[0.0, 0.0]; 8];
-
-    let mut mesh = Mesh::new(PrimitiveTopology::LineList, RenderAssetUsages::RENDER_WORLD);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vertices);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
-    mesh.insert_indices(Indices::U32(indices));
-
-    let mesh_handle = meshes.add(mesh);
-    let material_handle = materials.add(StandardMaterial {
-        base_color: Color::srgb(1.0, 0.0, 0.0),
-        unlit: true,
-        cull_mode: None,
-        ..default()
-    });
-
-    let debug_aabb_entity = commands
-        .spawn((
-            DebugAabb,
-            Mesh3d(mesh_handle),
-            MeshMaterial3d(material_handle),
-            Transform::from_translation(Vec3::ZERO),
-            GlobalTransform::default(),
-            Name::new("Debug AABB"),
-            NotShadowCaster,
-            NotShadowReceiver,
-        ))
-        .id();
-
-    commands.entity(chunk_entity).add_child(debug_aabb_entity);
-}
 
 fn generate_chunk_mesh(input: &ChunkRenderInput) -> Option<Mesh> {
     let mut vertices = Vec::new();

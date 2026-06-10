@@ -1,7 +1,5 @@
 use crate::voxel::{VOXEL_SIZE, VoxelFace};
-use crate::world::{
-    CHUNK_VOXELS_HEIGHT, CHUNK_VOXELS_SIZE, Chunk, ChunkCoord, DebugViewMode, World,
-};
+use crate::world::{CHUNK_VOXELS_HEIGHT, CHUNK_VOXELS_SIZE, Chunk, ChunkCoord, World};
 use crate::AppState;
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task, futures_lite::future};
@@ -28,15 +26,7 @@ pub struct PhysicsPlugin;
 
 impl Plugin for PhysicsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((
-            RapierPhysicsPlugin::<NoUserData>::default(),
-            RapierDebugRenderPlugin::default().disabled(),
-        ))
-        .add_systems(
-            Update,
-            sync_physics_debug_mode
-                .run_if(in_state(AppState::LoadingWorld).or(in_state(AppState::InGame))),
-        )
+        app.add_plugins((RapierPhysicsPlugin::<NoUserData>::default(),))
         .add_systems(
             Update,
             queue_chunk_physics_builds
@@ -52,13 +42,6 @@ impl Plugin for PhysicsPlugin {
 
 #[derive(Component)]
 pub struct ChunkPhysics;
-
-fn sync_physics_debug_mode(
-    debug_view_mode: Res<DebugViewMode>,
-    mut render_context: ResMut<DebugRenderContext>,
-) {
-    render_context.enabled = debug_view_mode.physics_wireframe;
-}
 
 fn queue_chunk_physics_builds(
     mut commands: Commands,

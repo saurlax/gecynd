@@ -50,9 +50,8 @@ pub fn initial_player_spawn_position() -> Vec3 {
 }
 
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct DebugViewMode {
-    pub render_wireframe: bool,
-    pub physics_wireframe: bool,
+pub struct DebugInfoState {
+    pub enabled: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -226,24 +225,12 @@ impl World {
     }
 }
 
-#[derive(Resource)]
-pub struct DebugAabbState {
-    pub enabled: bool,
-}
-
-impl Default for DebugAabbState {
-    fn default() -> Self {
-        Self { enabled: false }
-    }
-}
-
 pub struct WorldPlugin;
 
 impl Plugin for WorldPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<World>()
-            .init_resource::<DebugAabbState>()
-            .init_resource::<DebugViewMode>()
+            .init_resource::<DebugInfoState>()
             .init_resource::<InitialWorldGeneration>()
             .add_message::<EditRequest>()
             .add_systems(OnEnter(AppState::MainMenu), cleanup_player_session)
@@ -269,8 +256,7 @@ impl Plugin for WorldPlugin {
                     chunk_loading_system,
                     chunk_unloading_system,
                     apply_edit_requests_system,
-                    debug_view_mode_system,
-                    debug_state_system,
+                    toggle_debug_info_system,
                 )
                     .run_if(in_state(AppState::InGame)),
             );
@@ -787,21 +773,11 @@ pub fn mark_chunk_for_update(commands: &mut Commands, world: &World, world_pos: 
     }
 }
 
-fn debug_state_system(mut debug_state: ResMut<DebugAabbState>, keys: Res<ButtonInput<KeyCode>>) {
-    if keys.just_pressed(KeyCode::F1) {
-        debug_state.enabled = !debug_state.enabled;
-    }
-}
-
-fn debug_view_mode_system(
+fn toggle_debug_info_system(
+    mut debug_info_state: ResMut<DebugInfoState>,
     keys: Res<ButtonInput<KeyCode>>,
-    mut debug_view_mode: ResMut<DebugViewMode>,
 ) {
-    if keys.just_pressed(KeyCode::F2) {
-        debug_view_mode.render_wireframe = !debug_view_mode.render_wireframe;
-    }
-
-    if keys.just_pressed(KeyCode::F3) {
-        debug_view_mode.physics_wireframe = !debug_view_mode.physics_wireframe;
+    if keys.just_pressed(KeyCode::F1) {
+        debug_info_state.enabled = !debug_info_state.enabled;
     }
 }
