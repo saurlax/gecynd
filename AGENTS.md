@@ -1,5 +1,7 @@
 This is a voxel sandbox game written using Bevy. Please use the Context7 tool to read the detailed documentation of Bevy.
 
+Before making changes or answering project-specific questions, read the `specs/` directory first to find relevant project notes, research, and requirements.
+
 ## Project Status
 
 ### Snapshot
@@ -111,7 +113,7 @@ This matches current Bevy guidance: frame logic should stay in `Update`, determi
 ### Repository Contents Observed
 
 - Source code lives in `src/`
-- Research notes live in `docs/voxel-research.md`
+- Project notes and research live in `specs/`
 - There is no dedicated test suite in the repository yet
 - `target/` is present locally and ignored from source control
 
