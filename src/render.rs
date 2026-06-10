@@ -52,15 +52,12 @@ struct ChunkMaterial {
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(WireframePlugin::default())
+            .add_systems(OnEnter(AppState::LoadingWorld), (setup_lighting, setup_chunk_material))
             .add_systems(
-                OnEnter(AppState::LoadingWorld),
-                (
-                    setup_lighting,
-                    setup_chunk_material,
-                    setup_crosshair,
-                    setup_voxel_highlight,
-                ),
+                OnEnter(AppState::InGame),
+                (setup_crosshair, setup_voxel_highlight),
             )
+            .add_systems(OnExit(AppState::InGame), cleanup_ingame_render_ui)
             .add_systems(
                 Update,
                 (
@@ -179,6 +176,20 @@ fn setup_voxel_highlight(
         Visibility::Hidden,
         Name::new("Voxel Highlight"),
     ));
+}
+
+fn cleanup_ingame_render_ui(
+    mut commands: Commands,
+    crosshair_query: Query<Entity, With<Crosshair>>,
+    highlight_query: Query<Entity, With<VoxelHighlight>>,
+) {
+    for entity in crosshair_query.iter() {
+        commands.entity(entity).despawn();
+    }
+
+    for entity in highlight_query.iter() {
+        commands.entity(entity).despawn();
+    }
 }
 
 fn queue_chunk_render_builds(

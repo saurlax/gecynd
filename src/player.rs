@@ -157,6 +157,14 @@ impl Plugin for PlayerPlugin {
             .init_resource::<PlacementCooldown>()
             .init_resource::<Inventory>()
             .add_systems(Startup, setup_cursor_grab)
+            .add_systems(
+                OnEnter(AppState::MainMenu),
+                release_cursor_on_non_gameplay_enter,
+            )
+            .add_systems(
+                OnEnter(AppState::LoadingWorld),
+                release_cursor_on_non_gameplay_enter,
+            )
             .add_systems(OnEnter(AppState::InGame), lock_cursor_on_ingame_enter)
             .add_systems(OnEnter(AppState::Paused), release_cursor_on_pause_enter)
             .add_systems(
@@ -423,6 +431,16 @@ fn release_cursor_on_pause_enter(
         release_cursor(&mut cursor_options);
         cursor_state.was_locked_before_focus_loss = false;
     }
+}
+
+fn release_cursor_on_non_gameplay_enter(
+    mut window_cursor_query: Query<&mut CursorOptions, With<PrimaryWindow>>,
+    mut cursor_state: ResMut<CursorState>,
+) {
+    if let Ok(mut cursor_options) = window_cursor_query.single_mut() {
+        release_cursor(&mut cursor_options);
+    }
+    cursor_state.was_locked_before_focus_loss = false;
 }
 
 fn lock_cursor(window: &mut Window, cursor_options: &mut CursorOptions) {

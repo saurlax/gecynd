@@ -4,7 +4,8 @@ use bevy::tasks::{AsyncComputeTaskPool, Task, futures_lite::future};
 use serde::{Deserialize, Serialize};
 
 use crate::player::{
-    EditMode, EditRequest, Inventory, NeedsPhysicsRefresh, NeedsRenderRefresh, Player, spawn_player,
+    EditMode, EditRequest, Inventory, NeedsPhysicsRefresh, NeedsRenderRefresh, Player,
+    PlayerCamera, spawn_player,
 };
 use crate::save::{SaveState, SavedChunk};
 use crate::terrain::{TERRAIN_MAX_HEIGHT_METERS, TerrainGenerator};
@@ -245,6 +246,7 @@ impl Plugin for WorldPlugin {
             .init_resource::<DebugViewMode>()
             .init_resource::<InitialWorldGeneration>()
             .add_message::<EditRequest>()
+            .add_systems(OnEnter(AppState::MainMenu), cleanup_player_session)
             .add_systems(OnEnter(AppState::MainMenu), cleanup_world_session)
             .add_systems(
                 OnEnter(AppState::LoadingWorld),
@@ -324,6 +326,20 @@ fn cleanup_world_session(
     generation_state.completed_chunks = 0;
     generation_state.target_chunks.clear();
     generation_state.spawn_position = None;
+}
+
+fn cleanup_player_session(
+    mut commands: Commands,
+    player_query: Query<Entity, With<Player>>,
+    player_camera_query: Query<Entity, With<PlayerCamera>>,
+) {
+    for entity in player_query.iter() {
+        commands.entity(entity).despawn();
+    }
+
+    for entity in player_camera_query.iter() {
+        commands.entity(entity).despawn();
+    }
 }
 
 fn queue_chunk_generation(
