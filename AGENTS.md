@@ -9,7 +9,7 @@ Before making changes or answering project-specific questions, read the `specs/`
 - Project name: `gecynd`
 - Current version: `0.1.0`
 - Main branch observed: `main`
-- Build status verified on this workspace: `cargo check` passes on 2026-06-06
+- Build status verified on this workspace: `cargo check` passes on 2026-06-11
 - Engine stack:
   - `bevy = 0.18.1`
   - `bevy_rapier3d = 0.34.0`
@@ -24,10 +24,13 @@ The project is currently a playable voxel sandbox prototype with:
 - voxel selection with 3D DDA traversal
 - left click block destruction
 - right click block placement
+- bottom hotbar material selection with number keys and mouse wheel
+- in-game pause menu with resume and return-to-main-menu flow
+- save/load support for the default world directory
 - async chunk loading and unloading around the player
 - async chunk mesh rebuilding
 - async chunk collider rebuilding
-- simple in-game debug and status UI
+- lightweight in-game debug info toggle and status UI
 
 ### Current Architecture
 
@@ -45,16 +48,15 @@ The project is currently a playable voxel sandbox prototype with:
   - currently produces layered grass, dirt, and stone terrain
 - `src/player.rs`
   - controls player movement and camera look
-  - handles voxel targeting and edit interactions
+  - handles voxel targeting, material selection, and edit interactions
   - marks chunks and border neighbors dirty after edits
 - `src/render.rs`
   - builds chunk meshes from voxel data
-  - manages chunk mesh entities, highlight rendering, crosshair, and debug AABBs
+  - manages chunk mesh entities, voxel highlight rendering, and crosshair UI
 - `src/physics.rs`
   - builds Rapier trimesh colliders from voxel data
-  - syncs physics debug rendering
 - `src/ui.rs`
-  - shows player position, selected voxel information, loading overlay, and controls
+  - shows the main menu, loading overlay, pause menu, hotbar, and optional debug info
 - `src/voxel.rs`
   - defines voxel size, voxel types, and voxel face helpers
 
@@ -87,9 +89,7 @@ This matches current Bevy guidance: frame logic should stay in `Update`, determi
 - Physics currently uses Rapier fixed-body trimesh colliders per chunk
 - Voxel highlight and crosshair are implemented
 - Debug toggles:
-  - `F1`: chunk AABB debug
-  - `F2`: render wireframe
-  - `F3`: physics wireframe
+  - `F1`: toggle lightweight debug info
 
 ### Current Terrain and Loading Behavior
 
@@ -123,7 +123,6 @@ This matches current Bevy guidance: frame logic should stay in `Update`, determi
 - Chunk physics still rebuilds full trimesh colliders for edited chunks
 - Terrain generation is simple heightmap terrain, not caves or volumetric structures
 - Building is still raw voxel placement and destruction, without higher-level tools
-- There is no save/load pipeline yet
 - There is no movable voxel-object or debris system yet
 
 ## Working Guidelines
