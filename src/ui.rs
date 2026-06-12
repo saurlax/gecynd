@@ -1,13 +1,13 @@
 use bevy::prelude::*;
 
+use crate::AppState;
 use crate::player::{
     HOTBAR_MATERIALS, Inventory, Player, PlayerInteraction, selected_material_index,
 };
 use crate::save::{SaveState, flush_pending_save, queue_manual_save};
-use crate::world::Chunk;
 use crate::voxel::VoxelType;
+use crate::world::Chunk;
 use crate::world::{DebugInfoState, InitialWorldGeneration};
-use crate::AppState;
 
 const NORMAL_BUTTON: Color = Color::srgb(0.30, 0.30, 0.30);
 const HOVERED_BUTTON: Color = Color::srgb(0.42, 0.42, 0.42);
@@ -45,7 +45,11 @@ impl Plugin for UiPlugin {
             )
             .add_systems(
                 Update,
-                (pause_menu_button_visuals, pause_menu_actions, pause_input_system)
+                (
+                    pause_menu_button_visuals,
+                    pause_menu_actions,
+                    pause_input_system,
+                )
                     .run_if(in_state(AppState::Paused)),
             );
     }
@@ -191,7 +195,6 @@ fn setup_main_menu(mut commands: Commands, save_state: Res<SaveState>) {
                         MainMenuAction::LoadSave,
                         save_state.save_exists(),
                     );
-
                 });
 
             parent.spawn((
@@ -244,7 +247,11 @@ fn spawn_menu_button(
                 border: UiRect::all(Val::Px(2.0)),
                 ..default()
             },
-            BackgroundColor(if enabled { NORMAL_BUTTON } else { DISABLED_BUTTON }),
+            BackgroundColor(if enabled {
+                NORMAL_BUTTON
+            } else {
+                DISABLED_BUTTON
+            }),
             BorderColor::all(if enabled {
                 Color::srgb(0.08, 0.08, 0.08)
             } else {
@@ -279,7 +286,12 @@ fn cleanup_main_menu(mut commands: Commands, root_query: Query<Entity, With<Main
 
 fn main_menu_button_visuals(
     mut button_query: Query<
-        (&Interaction, &InteractionDisabled, &mut BackgroundColor, &mut BorderColor),
+        (
+            &Interaction,
+            &InteractionDisabled,
+            &mut BackgroundColor,
+            &mut BorderColor,
+        ),
         (Changed<Interaction>, With<Button>, With<MainMenuButton>),
     >,
 ) {
@@ -512,13 +524,9 @@ fn setup_hud(mut commands: Commands) {
                     }
                 });
         });
-
 }
 
-fn cleanup_hud(
-    mut commands: Commands,
-    hud_query: Query<Entity, With<HudRoot>>,
-) {
+fn cleanup_hud(mut commands: Commands, hud_query: Query<Entity, With<HudRoot>>) {
     for entity in hud_query.iter() {
         commands.entity(entity).despawn();
     }
@@ -688,7 +696,7 @@ fn setup_loading_screen(mut commands: Commands) {
                                 BackgroundColor(Color::srgb(0.78, 0.84, 0.32)),
                                 LoadingProgressFill,
                             ));
-                    });
+                        });
 
                     panel.spawn((
                         Text::new("Please wait while world data is assembled."),
@@ -718,8 +726,7 @@ fn update_loading_screen(
     if let Ok(mut text) = text_queries.p0().single_mut() {
         **text = format!(
             "Preparing World... {} / {}",
-            generation_state.completed_chunks,
-            generation_state.total_chunks
+            generation_state.completed_chunks, generation_state.total_chunks
         );
     }
 

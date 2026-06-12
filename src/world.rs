@@ -3,6 +3,7 @@ use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task, futures_lite::future};
 use serde::{Deserialize, Serialize};
 
+use crate::AppState;
 use crate::player::{
     EditMode, EditRequest, Inventory, NeedsPhysicsRefresh, NeedsRenderRefresh, Player,
     PlayerCamera, spawn_player,
@@ -10,7 +11,6 @@ use crate::player::{
 use crate::save::{SaveState, SavedChunk};
 use crate::terrain::{TERRAIN_MAX_HEIGHT_METERS, TerrainGenerator};
 use crate::voxel::{VOXEL_SIZE, Voxel, VoxelType};
-use crate::AppState;
 
 pub const CHUNK_SIZE: usize = 32;
 pub const CHUNK_HEIGHT: usize = 256;
@@ -426,7 +426,8 @@ fn complete_initial_world_generation(
         return;
     }
 
-    if generation_state.total_chunks == 0 || generation_state.completed_chunks < generation_state.total_chunks
+    if generation_state.total_chunks == 0
+        || generation_state.completed_chunks < generation_state.total_chunks
     {
         return;
     }
@@ -541,7 +542,8 @@ fn apply_edit_requests_system(
     mut inventory: ResMut<Inventory>,
 ) {
     for request in edit_requests.read() {
-        let changed_positions = apply_edit_request(&world, &mut chunk_query, &mut inventory, request);
+        let changed_positions =
+            apply_edit_request(&world, &mut chunk_query, &mut inventory, request);
         for world_pos in changed_positions {
             mark_chunk_for_update(&mut commands, &world, world_pos);
         }
@@ -581,9 +583,15 @@ fn apply_edit_request(
                 }
             }
             EditMode::Break => {
-                if let Some(previous) = world.get_voxel_at_world(operation.position, &chunk_query.as_readonly()) {
+                if let Some(previous) =
+                    world.get_voxel_at_world(operation.position, &chunk_query.as_readonly())
+                {
                     if previous.is_solid()
-                        && world.set_voxel_at_world(operation.position, Voxel::new(VoxelType::Air), chunk_query)
+                        && world.set_voxel_at_world(
+                            operation.position,
+                            Voxel::new(VoxelType::Air),
+                            chunk_query,
+                        )
                     {
                         inventory.add(previous.voxel_type, 1);
                         changed_positions.push(operation.position);
@@ -669,7 +677,10 @@ mod tests {
         app.update();
         app.update();
 
-        assert_eq!(*app.world().resource::<State<AppState>>().get(), AppState::InGame);
+        assert_eq!(
+            *app.world().resource::<State<AppState>>().get(),
+            AppState::InGame
+        );
     }
 
     #[test]
@@ -743,7 +754,6 @@ mod tests {
         let player_count = player_query.iter(app.world()).count();
         assert_eq!(player_count, 1);
     }
-
 }
 
 pub fn mark_chunk_for_update(commands: &mut Commands, world: &World, world_pos: Vec3) {

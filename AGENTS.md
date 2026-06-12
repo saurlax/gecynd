@@ -133,6 +133,56 @@ This matches current Bevy guidance: frame logic should stay in `Update`, determi
 - Prefer Bevy task pools for heavy background work
 - When changing Bevy APIs or patterns, verify them with Context7 instead of relying on memory
 
+## Debugging Workflow
+
+### Windows Desktop Automation
+
+- The `windows-desktop-e2e` skill is installed at `~/.agents/skills/windows-desktop-e2e`.
+- Use it when an agent needs to launch the native Windows game window, bring it forward, send keyboard or mouse input, and capture screenshots for visual inspection.
+- Prefer real desktop-region screenshots over `PrintWindow`-style capture for Bevy/Vulkan windows, because GPU-rendered windows may otherwise capture as black.
+- For visual debugging, combine screenshots with BRP ECS queries instead of relying on screenshots alone.
+
+### Bevy Remote Protocol
+
+- Debug builds enable Bevy Remote Protocol over HTTP on `127.0.0.1:15702`.
+- The BRP setup lives in `src/debug_remote.rs` and is only compiled when `debug_assertions` are enabled.
+- Release builds must not expose this debug HTTP endpoint unless explicitly requested.
+- Built-in BRP methods such as `world.query`, `world.list_components`, `world.get_components`, and `world.get_resources` are available.
+- Project-specific methods are available:
+  - `gecynd.debug.summary`
+  - `gecynd.debug.player`
+  - `gecynd.debug.chunks`
+
+Example PowerShell request:
+
+```powershell
+$body = @{ jsonrpc = "2.0"; method = "gecynd.debug.summary"; id = 1 } | ConvertTo-Json -Compress
+Invoke-RestMethod -Uri "http://127.0.0.1:15702/" -Method Post -ContentType "application/json" -Body $body
+```
+
+Use `gecynd.debug.summary` to quickly check:
+
+- current `AppState`
+- player and camera entity counts
+- chunk entity count
+- chunk mesh and physics counts
+- pending render and physics task counts
+- dirty render and physics refresh marker counts
+- initial world generation progress
+
+Use `gecynd.debug.player` to inspect player and camera transforms.
+
+Use `gecynd.debug.chunks` to inspect chunk counts and a small chunk sample without serializing full voxel buffers.
+
+When debugging rendering, prefer this loop:
+
+1. Start the game with `cargo run` or `target/debug/gecynd.exe`.
+2. Capture the game window screenshot with desktop automation.
+3. Query `gecynd.debug.summary`.
+4. If terrain is missing visually, compare `chunk_components`, `chunk_meshes`, `pending_render_meshes`, and `needs_render_refresh`.
+5. If physics works but terrain is invisible, focus on render components, materials, camera settings, visibility, lighting, and post-processing.
+6. If chunks are missing in both rendering and physics, focus on world generation, save loading, chunk lifecycle, and async task completion.
+
 ## Style Guide
 
 Your code should be kept simple and clear, with attention paid to scalability and compatibility. Do not write temporary code. Only add comments when necessary, and use English.

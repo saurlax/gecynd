@@ -10,6 +10,11 @@ mod ui;
 mod voxel;
 mod world;
 
+#[cfg(debug_assertions)]
+mod debug_remote;
+
+#[cfg(debug_assertions)]
+use debug_remote::DebugRemotePlugin;
 use physics::PhysicsPlugin;
 use player::PlayerPlugin;
 use render::RenderPlugin;
@@ -37,7 +42,7 @@ fn main() {
             ..default()
         }))
         .init_state::<AppState>()
-        .insert_resource(ClearColor(Color::srgb(0.53, 0.81, 0.98)))
+        .insert_resource(ClearColor(Color::srgb(0.58, 0.76, 0.90)))
         .add_plugins((
             SavePlugin,
             WorldPlugin,
@@ -46,9 +51,18 @@ fn main() {
             RenderPlugin,
             UiPlugin,
         ))
+        .add_plugins(debug_plugins())
         .add_systems(Update, handle_window_close)
         .run();
 }
+
+#[cfg(debug_assertions)]
+fn debug_plugins() -> DebugRemotePlugin {
+    DebugRemotePlugin
+}
+
+#[cfg(not(debug_assertions))]
+fn debug_plugins() {}
 
 fn handle_window_close(
     mut close_events: MessageReader<WindowCloseRequested>,

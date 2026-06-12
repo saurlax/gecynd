@@ -1,12 +1,12 @@
+use crate::AppState;
 use crate::voxel::{VOXEL_SIZE, VoxelFace};
 use crate::world::{CHUNK_VOXELS_HEIGHT, CHUNK_VOXELS_SIZE, Chunk, ChunkCoord, World};
-use crate::AppState;
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task, futures_lite::future};
 use bevy_rapier3d::prelude::*;
 
 #[derive(Component)]
-struct PendingPhysicsCollider(Task<(u64, Option<Collider>)>);
+pub(crate) struct PendingPhysicsCollider(Task<(u64, Option<Collider>)>);
 
 #[derive(Clone)]
 struct ChunkPhysicsInput {
@@ -27,16 +27,16 @@ pub struct PhysicsPlugin;
 impl Plugin for PhysicsPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((RapierPhysicsPlugin::<NoUserData>::default(),))
-        .add_systems(
-            Update,
-            queue_chunk_physics_builds
-                .run_if(in_state(AppState::LoadingWorld).or(in_state(AppState::InGame))),
-        )
-        .add_systems(
-            Update,
-            process_chunk_physics_builds
-                .run_if(in_state(AppState::LoadingWorld).or(in_state(AppState::InGame))),
-        );
+            .add_systems(
+                Update,
+                queue_chunk_physics_builds
+                    .run_if(in_state(AppState::LoadingWorld).or(in_state(AppState::InGame))),
+            )
+            .add_systems(
+                Update,
+                process_chunk_physics_builds
+                    .run_if(in_state(AppState::LoadingWorld).or(in_state(AppState::InGame))),
+            );
     }
 }
 
@@ -207,7 +207,10 @@ fn neighbor_voxel_for_face(
     }
 
     if (0..CHUNK_VOXELS_SIZE as i32).contains(&nx) && (0..CHUNK_VOXELS_SIZE as i32).contains(&nz) {
-        return input.chunk.get_voxel(nx as usize, ny as usize, nz as usize).copied();
+        return input
+            .chunk
+            .get_voxel(nx as usize, ny as usize, nz as usize)
+            .copied();
     }
 
     if nx < 0 {

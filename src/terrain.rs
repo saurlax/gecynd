@@ -55,9 +55,11 @@ impl TerrainGenerator {
                         world_y as f64 * 0.055,
                         world_z as f64 * 0.055,
                     ]);
-                    let ore_noise = self
-                        .ore_noise
-                        .get([world_x as f64 * 0.09, world_y as f64 * 0.09, world_z as f64 * 0.09]);
+                    let ore_noise = self.ore_noise.get([
+                        world_x as f64 * 0.09,
+                        world_y as f64 * 0.09,
+                        world_z as f64 * 0.09,
+                    ]);
 
                     let voxel_type = if yi > surface_voxel_y {
                         VoxelType::Air

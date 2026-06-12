@@ -1,8 +1,13 @@
+use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
+use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::time::Fixed;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow, WindowFocused};
-use bevy::{ecs::message::MessageReader, input::mouse::{MouseMotion, MouseWheel}};
+use bevy::{
+    ecs::message::MessageReader,
+    input::mouse::{MouseMotion, MouseWheel},
+};
 use bevy_rapier3d::prelude::*;
 
 use crate::AppState;
@@ -15,6 +20,8 @@ const PLAYER_GRAVITY: f32 = 25.0;
 const PLAYER_MAX_FALL_SPEED: f32 = 40.0;
 const PLAYER_JUMP_SPEED: f32 = 6.5;
 const PLAYER_STEP_HEIGHT: f32 = 0.5;
+const FOG_COLOR: Color = Color::srgb(0.58, 0.76, 0.90);
+const FOG_DENSITY: f32 = 0.008;
 
 #[derive(Component)]
 pub struct Player;
@@ -237,6 +244,15 @@ pub fn spawn_player(commands: &mut Commands, spawn_translation: Vec3) {
         .spawn((
             PlayerCamera,
             Camera3d::default(),
+            Tonemapping::TonyMcMapface,
+            DebandDither::Enabled,
+            DistanceFog {
+                color: FOG_COLOR,
+                falloff: FogFalloff::Exponential {
+                    density: FOG_DENSITY,
+                },
+                ..default()
+            },
             Transform::from_xyz(0.0, 1.6, 0.0),
             GlobalTransform::default(),
         ))
@@ -717,12 +733,14 @@ fn create_break_operations(
     [selected_voxel_pos]
         .into_iter()
         .filter_map(|target_pos| {
-            world.get_voxel_at_world(target_pos, chunk_query).and_then(|existing| {
-                existing.is_solid().then_some(AppliedEditOperation {
-                    position: target_pos,
-                    after: VoxelType::Air,
+            world
+                .get_voxel_at_world(target_pos, chunk_query)
+                .and_then(|existing| {
+                    existing.is_solid().then_some(AppliedEditOperation {
+                        position: target_pos,
+                        after: VoxelType::Air,
+                    })
                 })
-            })
         })
         .collect()
 }
@@ -743,17 +761,22 @@ fn create_place_operations(
         .into_iter()
         .filter(|target_pos| !player_overlaps_voxel(player_pos, *target_pos))
         .filter_map(|target_pos| {
-            world.get_voxel_at_world(target_pos, chunk_query).and_then(|existing| {
-                (!existing.is_solid()).then_some(AppliedEditOperation {
-                    position: target_pos,
-                    after: selected_material,
+            world
+                .get_voxel_at_world(target_pos, chunk_query)
+                .and_then(|existing| {
+                    (!existing.is_solid()).then_some(AppliedEditOperation {
+                        position: target_pos,
+                        after: selected_material,
+                    })
                 })
-            })
         })
         .collect()
 }
 
-fn queue_edit_request(operations: Vec<AppliedEditOperation>, edit_writer: &mut MessageWriter<EditRequest>) {
+fn queue_edit_request(
+    operations: Vec<AppliedEditOperation>,
+    edit_writer: &mut MessageWriter<EditRequest>,
+) {
     let request_operations = operations
         .iter()
         .map(|operation| EditOperation {

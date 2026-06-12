@@ -169,7 +169,6 @@ fn load_world_directory(root: &Path) -> Option<(WorldMetadata, HashMap<ChunkCoor
     Some((metadata, chunks))
 }
 
-
 fn build_save_snapshot(
     save_state: &SaveState,
     player_query: &Query<&Transform, With<Player>>,
@@ -181,7 +180,11 @@ fn build_save_snapshot(
         .map(|transform| transform.translation)
         .unwrap_or(Vec3::ZERO);
 
-    let mut dirty_chunks = save_state.dirty_chunks.values().cloned().collect::<Vec<_>>();
+    let mut dirty_chunks = save_state
+        .dirty_chunks
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
     for chunk in chunk_query.iter() {
         if chunk.modified {
             dirty_chunks.retain(|saved| saved.coord != chunk.coord);
@@ -214,9 +217,8 @@ pub fn queue_manual_save(
     let root = save_state.root.clone();
     let snapshot = build_save_snapshot(save_state, player_query, chunk_query, inventory);
     let task_pool = AsyncComputeTaskPool::get();
-    save_state.pending_write = Some(task_pool.spawn(async move {
-        write_world_directory(&root, snapshot.0, snapshot.1)
-    }));
+    save_state.pending_write =
+        Some(task_pool.spawn(async move { write_world_directory(&root, snapshot.0, snapshot.1) }));
 }
 
 pub fn load_inventory_from_save(save_state: &SaveState) -> Inventory {
@@ -287,7 +289,9 @@ fn read_world_metadata(path: &Path) -> Result<WorldMetadata, String> {
     let mut cursor = Cursor::new(bytes);
 
     let mut magic = [0u8; 4];
-    cursor.read_exact(&mut magic).map_err(|error| error.to_string())?;
+    cursor
+        .read_exact(&mut magic)
+        .map_err(|error| error.to_string())?;
     if &magic != SAVE_MAGIC {
         return Err("Invalid world metadata header".to_string());
     }
@@ -339,7 +343,9 @@ fn read_chunk_file(path: &Path) -> Result<SavedChunk, String> {
     let mut cursor = Cursor::new(bytes);
 
     let mut magic = [0u8; 4];
-    cursor.read_exact(&mut magic).map_err(|error| error.to_string())?;
+    cursor
+        .read_exact(&mut magic)
+        .map_err(|error| error.to_string())?;
     if &magic != CHUNK_MAGIC {
         return Err(format!("Invalid chunk header in {}", path.display()));
     }
@@ -379,25 +385,33 @@ fn voxel_type_from_u8(value: u8) -> Result<VoxelType, String> {
 
 fn read_u8(cursor: &mut Cursor<Vec<u8>>) -> Result<u8, String> {
     let mut bytes = [0u8; 1];
-    cursor.read_exact(&mut bytes).map_err(|error| error.to_string())?;
+    cursor
+        .read_exact(&mut bytes)
+        .map_err(|error| error.to_string())?;
     Ok(bytes[0])
 }
 
 fn read_u32(cursor: &mut Cursor<Vec<u8>>) -> Result<u32, String> {
     let mut bytes = [0u8; 4];
-    cursor.read_exact(&mut bytes).map_err(|error| error.to_string())?;
+    cursor
+        .read_exact(&mut bytes)
+        .map_err(|error| error.to_string())?;
     Ok(u32::from_le_bytes(bytes))
 }
 
 fn read_i32(cursor: &mut Cursor<Vec<u8>>) -> Result<i32, String> {
     let mut bytes = [0u8; 4];
-    cursor.read_exact(&mut bytes).map_err(|error| error.to_string())?;
+    cursor
+        .read_exact(&mut bytes)
+        .map_err(|error| error.to_string())?;
     Ok(i32::from_le_bytes(bytes))
 }
 
 fn read_f32(cursor: &mut Cursor<Vec<u8>>) -> Result<f32, String> {
     let mut bytes = [0u8; 4];
-    cursor.read_exact(&mut bytes).map_err(|error| error.to_string())?;
+    cursor
+        .read_exact(&mut bytes)
+        .map_err(|error| error.to_string())?;
     Ok(f32::from_le_bytes(bytes))
 }
 

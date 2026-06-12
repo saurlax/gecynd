@@ -3,13 +3,15 @@ use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task, futures_lite::future};
 
-use crate::player::{PlayerInteraction, brush_center_for_edit, brush_preview_origin, brush_world_size};
+use crate::AppState;
+use crate::player::{
+    PlayerInteraction, brush_center_for_edit, brush_preview_origin, brush_world_size,
+};
 use crate::voxel::{VOXEL_SIZE, VoxelFace, VoxelType};
 use crate::world::{
-    CHUNK_VOXELS_HEIGHT, CHUNK_VOXELS_SIZE, Chunk, ChunkCoord, World,
-    chunk_world_height, chunk_world_origin,
+    CHUNK_VOXELS_HEIGHT, CHUNK_VOXELS_SIZE, Chunk, ChunkCoord, World, chunk_world_height,
+    chunk_world_origin,
 };
-use crate::AppState;
 
 #[derive(Component)]
 pub struct ChunkMesh;
@@ -21,7 +23,7 @@ pub struct VoxelHighlight;
 pub struct Crosshair;
 
 #[derive(Component)]
-struct PendingRenderMesh(Task<(u64, Option<Mesh>)>);
+pub(crate) struct PendingRenderMesh(Task<(u64, Option<Mesh>)>);
 
 #[derive(Clone)]
 struct ChunkRenderInput {
@@ -44,32 +46,38 @@ struct ChunkMaterial {
     handle: Handle<StandardMaterial>,
 }
 
+const SUN_ILLUMINANCE: f32 = 14_000.0;
+const AMBIENT_BRIGHTNESS: f32 = 22.0;
+
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(OnEnter(AppState::LoadingWorld), (setup_lighting, setup_chunk_material))
-            .add_systems(
-                OnEnter(AppState::InGame),
-                (setup_crosshair, setup_voxel_highlight),
+        app.add_systems(
+            OnEnter(AppState::LoadingWorld),
+            (setup_lighting, setup_chunk_material),
+        )
+        .add_systems(
+            OnEnter(AppState::InGame),
+            (setup_crosshair, setup_voxel_highlight),
+        )
+        .add_systems(OnExit(AppState::InGame), cleanup_ingame_render_ui)
+        .add_systems(
+            Update,
+            (
+                queue_chunk_render_builds.before(process_chunk_render_builds),
+                process_chunk_render_builds,
+                voxel_highlight_system,
             )
-            .add_systems(OnExit(AppState::InGame), cleanup_ingame_render_ui)
-            .add_systems(
-                Update,
-                (
-                    queue_chunk_render_builds.before(process_chunk_render_builds),
-                    process_chunk_render_builds,
-                    voxel_highlight_system,
-                )
-                    .run_if(in_state(AppState::LoadingWorld).or(in_state(AppState::InGame))),
-            );
+                .run_if(in_state(AppState::LoadingWorld).or(in_state(AppState::InGame))),
+        );
     }
 }
 
 fn setup_lighting(mut commands: Commands) {
     commands.spawn((
         DirectionalLight {
-            illuminance: 9000.0,
-            color: Color::srgb(1.0, 0.97, 0.9),
-            shadows_enabled: false,
+            illuminance: SUN_ILLUMINANCE,
+            color: Color::srgb(1.0, 0.96, 0.88),
+            shadows_enabled: true,
             ..default()
         },
         Transform::from_rotation(Quat::from_euler(
@@ -81,8 +89,8 @@ fn setup_lighting(mut commands: Commands) {
     ));
 
     commands.insert_resource(GlobalAmbientLight {
-        color: Color::srgb(0.62, 0.69, 0.8),
-        brightness: 100.0,
+        color: Color::srgb(0.52, 0.60, 0.72),
+        brightness: AMBIENT_BRIGHTNESS,
         affects_lightmapped_meshes: false,
     });
 }
@@ -274,10 +282,9 @@ fn voxel_highlight_system(
     if let Some(selected_voxel_pos) = interaction.selected_voxel_world_pos {
         if let Some(voxel) = world.get_voxel_at_world(selected_voxel_pos, &chunk_query) {
             if voxel.is_solid() {
-                let Some(preview_center) = brush_center_for_edit(
-                    selected_voxel_pos,
-                    interaction.hit_face,
-                ) else {
+                let Some(preview_center) =
+                    brush_center_for_edit(selected_voxel_pos, interaction.hit_face)
+                else {
                     *highlight_visibility = Visibility::Hidden;
                     return;
                 };
@@ -328,7 +335,6 @@ fn create_box_wireframe(size: Vec3) -> Mesh {
 
     mesh
 }
-
 
 fn generate_chunk_mesh(input: &ChunkRenderInput) -> Option<Mesh> {
     let mut vertices = Vec::new();
@@ -491,7 +497,10 @@ fn neighbor_voxel_for_face(
     }
 
     if (0..CHUNK_VOXELS_SIZE as i32).contains(&nx) && (0..CHUNK_VOXELS_SIZE as i32).contains(&nz) {
-        return input.chunk.get_voxel(nx as usize, ny as usize, nz as usize).copied();
+        return input
+            .chunk
+            .get_voxel(nx as usize, ny as usize, nz as usize)
+            .copied();
     }
 
     if nx < 0 {
